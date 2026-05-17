@@ -27,18 +27,22 @@ export async function sendIMessage(
     console.warn("[agentphone] no toNumber resolved; cannot send");
     return;
   }
+  const payload = {
+    agent_id: env.AGENTPHONE_AGENT_ID,
+    to_number: toNumber,
+    body: text,
+  };
+  console.log("[agentphone] sendIMessage request", JSON.stringify(payload));
   const res = await fetch(`${BASE}/messages`, {
     method: "POST",
     headers: authHeaders(),
-    body: JSON.stringify({
-      agent_id: env.AGENTPHONE_AGENT_ID,
-      to_number: toNumber,
-      body: text,
-    }),
+    body: JSON.stringify(payload),
   });
+  const resBody = await res.text();
   if (!res.ok) {
-    const body = await res.text();
-    console.error("[agentphone] sendIMessage failed", res.status, body);
+    console.error("[agentphone] sendIMessage failed", res.status, resBody);
+  } else {
+    console.log("[agentphone] sendIMessage success", res.status, resBody);
   }
 }
 
