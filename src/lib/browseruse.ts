@@ -28,12 +28,17 @@ export type ScrapedLead = {
 
 function buildTask(service: string, location: string, count: number): string {
   return (
-    `Search Google Maps for "${service}" near "${location}". ` +
-    `Open the listing for the top ${count} businesses. ` +
-    `For each business, capture: name, phone (full international format like +14155551234 if listed), ` +
-    `email (if shown), street address, average star rating (number), and the Google Maps URL of the listing. ` +
-    `Return the results as a "leads" array. Use null for any field that isn't visible on the listing. ` +
-    `Stop after ${count} businesses; do not visit further pages.`
+    `You are searching for local service providers offering "${service}" near "${location}". ` +
+    `Search across ALL of the following sources and collect up to ${count} total unique leads:\n` +
+    `1. Google Maps — search "${service} near ${location}", open top results\n` +
+    `2. Craigslist — go to the nearest craigslist city, search Services section for "${service}"\n` +
+    `3. Facebook Marketplace — search Services for "${service}" near "${location}"\n` +
+    `4. Thumbtack (thumbtack.com) — search for "${service}" in "${location}"\n` +
+    `5. TaskRabbit (taskrabbit.com) — search for "${service}" in "${location}"\n` +
+    `For each lead capture: name, phone (full international format like +14155551234 if listed), ` +
+    `email (if shown), street address or city, average star rating (number), and the source URL.\n` +
+    `Deduplicate by phone number. Prefer leads with a phone number.\n` +
+    `Return the results as a "leads" array. Use null for any field that isn't visible.`
   );
 }
 
