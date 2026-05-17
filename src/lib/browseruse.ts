@@ -1,8 +1,127 @@
-import { BrowserUse } from "browser-use-sdk";
+import { BrowserUse, type MessageResponse, type SessionResponse } from "browser-use-sdk/v3";
 // browser-use-sdk requires Zod v4 for its `schema` option (it calls `z.toJSONSchema`).
 // Our app uses Zod v3 elsewhere; we keep them as separate packages via the `zod4` alias.
 import { z as z4 } from "zod4";
 import { env } from "./env";
+
+const TERMINAL_SESSION_STATUSES = new Set(["idle", "stopped", "timed_out", "error"]);
+const DEFAULT_BROWSER_USE_TIMEOUT_MS = 8 * 60 * 1000;
+const DEFAULT_BROWSER_USE_INTERVAL_MS = 2_000;
+
+export type BrowserUseObservedSession = {
+  id: string;
+  liveUrl: string | null;
+  status: string;
+  stepCount: number;
+  lastStepSummary: string | null;
+  screenshotUrl: string | null;
+};
+
+export type BrowserUseObservedMessage = {
+  id: string;
+  type: string;
+  summary: string;
+  screenshotUrl: string | null;
+  hidden: boolean;
+  createdAt: number;
+};
+
+export type BrowserUseTaskObserver = {
+  onSessionStarted?: (session: BrowserUseObservedSession) => Promise<void>;
+  onSessionUpdated?: (session: BrowserUseObservedSession) => Promise<void>;
+  onMessage?: (message: BrowserUseObservedMessage) => Promise<void>;
+  onError?: (error: Error) => Promise<void>;
+};
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function notifyObserver(callback: () => Promise<void> | undefined): Promise<void> {
+  try {
+    await callback();
+  } catch (error) {
+    console.error("[browseruse] progress observer failed", error);
+  }
+}
+
+function normalizeSession(session: SessionResponse): BrowserUseObservedSession {
+  return {
+    id: session.id,
+    liveUrl: session.liveUrl ?? null,
+    status: session.status,
+    stepCount: session.stepCount ?? 0,
+    lastStepSummary: session.lastStepSummary ?? null,
+    screenshotUrl: session.screenshotUrl ?? null,
+  };
+}
+
+function normalizeMessage(message: MessageResponse): BrowserUseObservedMessage {
+  return {
+    id: message.id,
+    type: message.type,
+    summary: message.summary || message.type,
+    screenshotUrl: message.screenshotUrl ?? null,
+    hidden: message.hidden,
+    createdAt: Date.parse(message.createdAt) || Date.now(),
+  };
+}
+
+function parseStructuredOutput<T extends z4.ZodType>(
+  output: unknown,
+  schema: T,
+): z4.infer<T> | null {
+  if (output == null) return null;
+  const raw = typeof output === "string" ? JSON.parse(output) : output;
+  return schema.parse(raw);
+}
+
+async function runBrowserUseTask<T extends z4.ZodType>(args: {
+  task: string;
+  schema: T;
+  observer?: BrowserUseTaskObserver;
+  timeoutMs?: number;
+}): Promise<z4.infer<T> | null> {
+  const client = new BrowserUse({ apiKey: env.BROWSER_USE_API_KEY });
+  let sessionId: string | null = null;
+
+  try {
+    const created = await client.sessions.create({
+      task: args.task,
+      keepAlive: false,
+      agentmail: false,
+      outputSchema: z4.toJSONSchema(args.schema),
+    });
+    sessionId = created.id;
+    await notifyObserver(() => args.observer?.onSessionStarted?.(normalizeSession(created)));
+
+    let cursor: string | null = null;
+    const deadline = Date.now() + (args.timeoutMs ?? DEFAULT_BROWSER_USE_TIMEOUT_MS);
+
+    while (Date.now() < deadline) {
+      const messages = await client.sessions.messages(sessionId, { after: cursor, limit: 100 });
+      for (const message of messages.messages) {
+        cursor = message.id;
+        await notifyObserver(() => args.observer?.onMessage?.(normalizeMessage(message)));
+      }
+
+      const current = await client.sessions.get(sessionId);
+      await notifyObserver(() => args.observer?.onSessionUpdated?.(normalizeSession(current)));
+      if (TERMINAL_SESSION_STATUSES.has(current.status)) {
+        return parseStructuredOutput(current.output, args.schema);
+      }
+
+      const remaining = deadline - Date.now();
+      await delay(Math.min(DEFAULT_BROWSER_USE_INTERVAL_MS, remaining));
+    }
+
+    throw new Error(`Browser Use session ${sessionId} did not complete in time`);
+  } catch (error) {
+    const normalized = error instanceof Error ? error : new Error(String(error));
+    await notifyObserver(() => args.observer?.onError?.(normalized));
+    throw normalized;
+  }
+}
 
 const LeadSchema = z4.object({
   name: z4.string(),
@@ -46,17 +165,18 @@ export async function scrapeLeads(
   service: string,
   location: string,
   count = 8,
+  observer?: BrowserUseTaskObserver,
 ): Promise<ScrapedLead[]> {
   if (!env.BROWSER_USE_API_KEY) {
     console.warn("[browseruse] no api key, returning empty leads");
     return [];
   }
   try {
-    const client = new BrowserUse({ apiKey: env.BROWSER_USE_API_KEY });
-    const result = await client.run(buildTask(service, location, count), {
+    const output = await runBrowserUseTask({
+      task: buildTask(service, location, count),
       schema: LeadsResponseSchema,
+      observer,
     });
-    const output = result.output as unknown as { leads?: z4.infer<typeof LeadSchema>[] };
     if (!output || !Array.isArray(output.leads)) {
       console.error("[browseruse] empty/invalid output", output);
       return [];
@@ -125,14 +245,16 @@ export async function enrichLead(args: {
   service: string;
   location: string;
   sourceUrl?: string;
+  observer?: BrowserUseTaskObserver;
 }): Promise<LeadEnrichment> {
   if (!env.BROWSER_USE_API_KEY) return {};
   try {
-    const client = new BrowserUse({ apiKey: env.BROWSER_USE_API_KEY });
-    const result = await client.run(buildEnrichmentTask(args), {
+    const o = await runBrowserUseTask({
+      task: buildEnrichmentTask(args),
       schema: EnrichmentSchema,
+      observer: args.observer,
     });
-    const o = result.output as unknown as z4.infer<typeof EnrichmentSchema>;
+    if (!o) return {};
     return {
       email: o.email ?? undefined,
       websiteSummary: o.website_summary ?? undefined,

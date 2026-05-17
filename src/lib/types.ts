@@ -50,6 +50,7 @@ export interface Job {
   id: number;
   user_id: number;
   conversation_id: string;
+  watch_token: string | null;
   intent_raw: string;
   service: string | null;
   location: string | null;
@@ -89,6 +90,42 @@ export interface CallRow {
   ended_at: number | null;
 }
 
+export interface MessageRow {
+  id: number;
+  job_id: number;
+  direction: "inbound" | "outbound";
+  channel: "imessage" | "voice" | "email" | "system";
+  body: string;
+  created_at: number;
+}
+
+export interface BrowserSessionRow {
+  id: number;
+  job_id: number;
+  label: string;
+  phase: string;
+  browser_use_session_id: string | null;
+  live_url: string | null;
+  status: string;
+  step_count: number;
+  last_step_summary: string | null;
+  screenshot_url: string | null;
+  error: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface BrowserEventRow {
+  id: number;
+  job_id: number;
+  browser_session_id: number;
+  external_message_id: string | null;
+  type: string;
+  summary: string;
+  screenshot_url: string | null;
+  created_at: number;
+}
+
 export interface EmailThread {
   id: number;
   job_id: number;
@@ -110,6 +147,15 @@ export interface EmailLeadMatch {
   job: Job;
   lead: Lead;
   emailThread: EmailThread | null;
+}
+
+export interface WatchSnapshot {
+  job: Job;
+  leads: Lead[];
+  calls: CallRow[];
+  messages: MessageRow[];
+  browserSessions: BrowserSessionRow[];
+  browserEvents: BrowserEventRow[];
 }
 
 export interface NegotiationContext {

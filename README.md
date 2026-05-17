@@ -27,6 +27,8 @@ new → searching → ranked → calling → (per-lead) negotiating
 |---|---|
 | `GET  /` | One-page React form: phone → onboard |
 | `POST /api/onboard` | Creates a user row + a Supermemory profile |
+| `GET  /watch/[token]` | Live job dashboard with Browser Use preview, agent events, leads, and call status |
+| `GET  /api/watch/[token]` | Polling snapshot for the live dashboard |
 | `POST /api/webhooks/agentphone` | Agentphone webhook for inbound iMessage, voice turns, and call lifecycle events |
 | `POST /api/webhooks/agentphone/voice` | Legacy voice-only webhook — kept for older Agentphone setups |
 | `POST /api/webhooks/agentmail` | Inbound email replies from cold-emailed leads |
@@ -77,8 +79,9 @@ Agentphone sends SMS events and voice turns to that same URL. The app returns
 1. User onboards on `/`, gets the Agentphone iMessage number to text.
 2. User texts the number with intent.
 3. Agentphone webhook → `handleInboundIMessage` →
+   - creates a per-job `/watch/[token]` link and texts it to the user →
    - parse intent (Gemini) → write request memory →
-   - Browser Use scrapes Google Maps for 5–10 leads →
+   - Browser Use scrapes Google Maps for 5–10 leads while persisting live preview/session events →
    - DB inserts + rank →
    - `createOutboundCall` × N in parallel (Agentphone voice webhook mode) →
    - phone-less leads → `sendColdEmail` (Agentmail).

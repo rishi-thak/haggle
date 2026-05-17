@@ -24,6 +24,7 @@ export default defineSchema({
     legacyId: v.number(),
     user_id: v.number(),
     conversation_id: v.string(),
+    watch_token: v.optional(nullableString),
     intent_raw: v.string(),
     service: nullableString,
     location: nullableString,
@@ -35,7 +36,8 @@ export default defineSchema({
     updated_at: v.number(),
   })
     .index("by_legacyId", ["legacyId"])
-    .index("by_conversation_id", ["conversation_id"]),
+    .index("by_conversation_id", ["conversation_id"])
+    .index("by_watch_token", ["watch_token"]),
 
   leads: defineTable({
     legacyId: v.number(),
@@ -79,6 +81,40 @@ export default defineSchema({
     body: v.string(),
     created_at: v.number(),
   }).index("by_job_id", ["job_id"]),
+
+  browser_sessions: defineTable({
+    legacyId: v.number(),
+    job_id: v.number(),
+    label: v.string(),
+    phase: v.string(),
+    browser_use_session_id: nullableString,
+    live_url: nullableString,
+    status: v.string(),
+    step_count: v.number(),
+    last_step_summary: nullableString,
+    screenshot_url: nullableString,
+    error: nullableString,
+    created_at: v.number(),
+    updated_at: v.number(),
+  })
+    .index("by_legacyId", ["legacyId"])
+    .index("by_job_id", ["job_id"])
+    .index("by_browser_use_session_id", ["browser_use_session_id"]),
+
+  browser_events: defineTable({
+    legacyId: v.number(),
+    job_id: v.number(),
+    browser_session_id: v.number(),
+    external_message_id: nullableString,
+    type: v.string(),
+    summary: v.string(),
+    screenshot_url: nullableString,
+    created_at: v.number(),
+  })
+    .index("by_legacyId", ["legacyId"])
+    .index("by_job_id", ["job_id"])
+    .index("by_browser_session_id", ["browser_session_id"])
+    .index("by_external_message_id", ["external_message_id"]),
 
   email_threads: defineTable({
     legacyId: v.number(),
