@@ -123,16 +123,6 @@ export default defineSchema({
     created_at: v.number(),
   }).index("by_conversation", ["conversation_id", "created_at"]),
 
-  followups: defineTable({
-    job_id: v.number(),
-    lead_id: v.number(),
-    conversation_id: v.string(),
-    provider_name: v.string(),
-    service: v.string(),
-    scheduled_at: v.number(),
-    sent: v.boolean(),
-  }).index("by_pending", ["sent", "scheduled_at"]),
-
   email_threads: defineTable({
     legacyId: v.number(),
     job_id: v.number(),

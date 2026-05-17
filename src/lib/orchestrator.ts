@@ -11,7 +11,6 @@ import { parseIntent } from "./intent";
 import { triageMessage } from "./triage";
 import { classifyJobControl } from "./jobControl";
 import { getJobStatusText } from "./jobStatus";
-import { scheduleFollowUp } from "./followup";
 import { payUsdc } from "./sponge";
 import { addMemory, addProviderFeedback, getProviderReputation, recallProviderHistory, searchMemories } from "./supermemory";
 import { getNegotiationStatusSnapshot, summarizeCall } from "./negotiator";
@@ -867,7 +866,6 @@ async function runPayment(jobId: number, leadIdOverride?: number): Promise<void>
         "positive",
       );
     }
-    await scheduleFollowUp(job, lead);
   } else {
     await updateJob(jobId, { status: "failed" });
     await sendIMessage(
