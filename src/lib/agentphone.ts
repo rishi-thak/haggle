@@ -27,11 +27,14 @@ export async function sendIMessage(
     console.warn("[agentphone] no toNumber resolved; cannot send");
     return;
   }
-  const payload = {
+  const payload: Record<string, string> = {
     agent_id: env.AGENTPHONE_AGENT_ID,
     to_number: toNumber,
     body: text,
   };
+  if (env.AGENTPHONE_FROM_NUMBER) {
+    payload.from_number = env.AGENTPHONE_FROM_NUMBER;
+  }
   console.log("[agentphone] sendIMessage request", JSON.stringify(payload));
   const res = await fetch(`${BASE}/messages`, {
     method: "POST",
