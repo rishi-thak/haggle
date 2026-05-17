@@ -1,6 +1,12 @@
 import { sendIMessage, createOutboundCall } from "./agentphone";
 import { sendColdEmail, sendFollowUpEmail } from "./agentmail";
-import { enrichLead, scrapeLeads } from "./browseruse";
+import {
+  enrichLead,
+  scrapeLeads,
+  type BrowserUseObservedMessage,
+  type BrowserUseObservedSession,
+  type BrowserUseTaskObserver,
+} from "./browseruse";
 import { parseIntent } from "./intent";
 import { payUsdc } from "./sponge";
 import { addMemory, recallProviderHistory, searchMemories } from "./supermemory";
@@ -19,14 +25,18 @@ import {
   markInboundEmailReceived,
   markJobAwaitingConfirmIfOpen,
   markJobFailedIfUnresolved,
+  createBrowserSession,
+  recordBrowserEvent,
   recordCallEnd,
   recordCallStart,
   upsertEmailThread,
+  updateBrowserSession,
   updateJob,
   updateLead,
 } from "./repo";
 import type { Job, Lead, NegotiationContext, NegotiationOutcome } from "./types";
 import { env } from "./env";
+import { buildWatchUrl } from "./watch";
 
 const MAX_LEADS = 8;
 const MAX_PARALLEL_CALLS = 4;
@@ -35,6 +45,59 @@ const TERMINAL_JOB_STATUSES = new Set<Job["status"]>(["complete", "failed"]);
 const RESOLUTION_LOCKED_JOB_STATUSES = new Set<Job["status"]>(["awaiting_confirm", "paying", "complete", "failed"]);
 const ACTIVE_LEAD_STATUSES = new Set<Lead["status"]>(["pending", "calling", "negotiating", "emailed"]);
 const FOLLOW_UP_LEAD_STATUSES = new Set<Lead["status"]>(["callback", "ambiguous"]);
+
+function createBrowserUseObserver(jobId: number, label: string, phase: string): BrowserUseTaskObserver {
+  let browserSessionId: number | null = null;
+
+  async function updateSession(session: BrowserUseObservedSession): Promise<void> {
+    if (!browserSessionId) return;
+    await updateBrowserSession(browserSessionId, {
+      live_url: session.liveUrl,
+      status: session.status,
+      step_count: session.stepCount,
+      last_step_summary: session.lastStepSummary,
+      screenshot_url: session.screenshotUrl,
+      error: null,
+    });
+  }
+
+  return {
+    async onSessionStarted(session) {
+      const row = await createBrowserSession({
+        jobId,
+        label,
+        phase,
+        browserUseSessionId: session.id,
+        liveUrl: session.liveUrl,
+        status: session.status,
+        stepCount: session.stepCount,
+        lastStepSummary: session.lastStepSummary,
+        screenshotUrl: session.screenshotUrl,
+      });
+      browserSessionId = row.id;
+    },
+    onSessionUpdated: updateSession,
+    async onMessage(message: BrowserUseObservedMessage) {
+      if (!browserSessionId || message.hidden) return;
+      await recordBrowserEvent({
+        jobId,
+        browserSessionId,
+        externalMessageId: message.id,
+        type: message.type,
+        summary: message.summary,
+        screenshotUrl: message.screenshotUrl,
+        createdAt: message.createdAt,
+      });
+    },
+    async onError(error) {
+      if (!browserSessionId) return;
+      await updateBrowserSession(browserSessionId, {
+        status: "error",
+        error: error.message,
+      });
+    },
+  };
+}
 
 async function notify(job: Job, text: string): Promise<void> {
   const user = await getUserByConversation(job.conversation_id);
@@ -234,6 +297,12 @@ export async function handleInboundIMessage(args: {
   const user = await getOrCreateUser(fromPhone);
   const job = await createJob({ userId: user.id, conversationId, intentRaw: text });
   await logMessage({ jobId: job.id, direction: "inbound", channel: "imessage", body: text });
+  if (job.watch_token) {
+    const watchUrl = buildWatchUrl(job.watch_token, env.PUBLIC_BASE_URL);
+    const watchText = `Live job link: ${watchUrl}`;
+    await sendIMessage(conversationId, watchText, user.phone);
+    await logMessage({ jobId: job.id, direction: "outbound", channel: "imessage", body: watchText });
+  }
   // Fire-and-forget orchestration so we return 200 to the webhook quickly.
   runFullJob(job.id, user.container_tag).catch((e) => {
     console.error("[orchestrator] runFullJob crashed", e);
@@ -271,7 +340,12 @@ async function runFullJob(jobId: number, containerTag: string): Promise<void> {
   );
 
   // 2. Lead gen
-  const scraped = await scrapeLeads(intent.service, intent.location, MAX_LEADS);
+  const scraped = await scrapeLeads(
+    intent.service,
+    intent.location,
+    MAX_LEADS,
+    createBrowserUseObserver(jobId, "Lead search", "lead_search"),
+  );
   if (!scraped.length) {
     await updateJob(jobId, { status: "failed" });
     await notify(
@@ -323,6 +397,7 @@ async function runFullJob(jobId: number, containerTag: string): Promise<void> {
         service: intent.service,
         location: intent.location,
         sourceUrl: lead.source_url ?? undefined,
+        observer: createBrowserUseObserver(jobId, `Research ${lead.name}`, "enrichment"),
       }),
     ),
   );
@@ -363,6 +438,12 @@ async function runFullJob(jobId: number, containerTag: string): Promise<void> {
       // Webhook voice mode: Agentphone routes per-turn webhooks to
       // /api/webhooks/agentphone/voice where we drive the negotiation with Gemini.
       const greeting = `Hi, this is Haggle calling about ${intent.service}.`;
+      await logMessage({
+        jobId,
+        direction: "outbound",
+        channel: "system",
+        body: `Issuing call to ${lead.name}${lead.phone ? ` at ${lead.phone}` : ""}.`,
+      });
       const call = await createOutboundCall({
         toNumber: lead.phone!,
         initialGreeting: greeting,

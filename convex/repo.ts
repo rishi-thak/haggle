@@ -16,6 +16,7 @@ type JobDoc = {
   legacyId: number;
   user_id: number;
   conversation_id: string;
+  watch_token?: string | null;
   intent_raw: string;
   service: string | null;
   location: string | null;
@@ -53,6 +54,42 @@ type CallDoc = {
   quoted_price_cents: number | null;
   created_at: number;
   ended_at: number | null;
+};
+
+type MessageDoc = {
+  legacyId: number;
+  job_id: number;
+  direction: string;
+  channel: string;
+  body: string;
+  created_at: number;
+};
+
+type BrowserSessionDoc = {
+  legacyId: number;
+  job_id: number;
+  label: string;
+  phase: string;
+  browser_use_session_id: string | null;
+  live_url: string | null;
+  status: string;
+  step_count: number;
+  last_step_summary: string | null;
+  screenshot_url: string | null;
+  error: string | null;
+  created_at: number;
+  updated_at: number;
+};
+
+type BrowserEventDoc = {
+  legacyId: number;
+  job_id: number;
+  browser_session_id: number;
+  external_message_id: string | null;
+  type: string;
+  summary: string;
+  screenshot_url: string | null;
+  created_at: number;
 };
 
 type EmailThreadDoc = {
@@ -105,6 +142,7 @@ function jobRow(doc: JobDoc) {
     id: doc.legacyId,
     user_id: doc.user_id,
     conversation_id: doc.conversation_id,
+    watch_token: doc.watch_token ?? null,
     intent_raw: doc.intent_raw,
     service: doc.service,
     location: doc.location,
@@ -146,6 +184,48 @@ function callRow(doc: CallDoc) {
     quoted_price_cents: doc.quoted_price_cents,
     created_at: doc.created_at,
     ended_at: doc.ended_at,
+  };
+}
+
+function messageRow(doc: MessageDoc) {
+  return {
+    id: doc.legacyId,
+    job_id: doc.job_id,
+    direction: doc.direction,
+    channel: doc.channel,
+    body: doc.body,
+    created_at: doc.created_at,
+  };
+}
+
+function browserSessionRow(doc: BrowserSessionDoc) {
+  return {
+    id: doc.legacyId,
+    job_id: doc.job_id,
+    label: doc.label,
+    phase: doc.phase,
+    browser_use_session_id: doc.browser_use_session_id,
+    live_url: doc.live_url,
+    status: doc.status,
+    step_count: doc.step_count,
+    last_step_summary: doc.last_step_summary,
+    screenshot_url: doc.screenshot_url,
+    error: doc.error,
+    created_at: doc.created_at,
+    updated_at: doc.updated_at,
+  };
+}
+
+function browserEventRow(doc: BrowserEventDoc) {
+  return {
+    id: doc.legacyId,
+    job_id: doc.job_id,
+    browser_session_id: doc.browser_session_id,
+    external_message_id: doc.external_message_id,
+    type: doc.type,
+    summary: doc.summary,
+    screenshot_url: doc.screenshot_url,
+    created_at: doc.created_at,
   };
 }
 
@@ -256,13 +336,14 @@ export const findActiveJobByConversation = query({
 });
 
 export const createJob = mutation({
-  args: { userId: v.number(), conversationId: v.string(), intentRaw: v.string() },
+  args: { userId: v.number(), conversationId: v.string(), intentRaw: v.string(), watchToken: v.string() },
   handler: async (ctx, args) => {
     const t = now();
     const doc = {
       legacyId: await nextLegacyId(ctx, "jobs"),
       user_id: args.userId,
       conversation_id: args.conversationId,
+      watch_token: args.watchToken,
       intent_raw: args.intentRaw,
       service: null,
       location: null,
@@ -302,6 +383,17 @@ export const getJob = query({
   args: { id: v.number() },
   handler: async (ctx, args) => {
     const job = await getJobDocByLegacyId(ctx, args.id);
+    return job ? jobRow(job) : null;
+  },
+});
+
+export const getJobByWatchToken = query({
+  args: { token: v.string() },
+  handler: async (ctx, args) => {
+    const job = await ctx.db
+      .query("jobs")
+      .withIndex("by_watch_token", (q) => q.eq("watch_token", args.token))
+      .unique();
     return job ? jobRow(job) : null;
   },
 });
@@ -399,6 +491,178 @@ export const logMessage = mutation({
       created_at: now(),
     });
     return null;
+  },
+});
+
+export const createBrowserSession = mutation({
+  args: {
+    jobId: v.number(),
+    label: v.string(),
+    phase: v.string(),
+    browserUseSessionId: nullableString,
+    liveUrl: nullableString,
+    status: v.string(),
+    stepCount: v.number(),
+    lastStepSummary: nullableString,
+    screenshotUrl: nullableString,
+  },
+  handler: async (ctx, args) => {
+    const t = now();
+    const existing = args.browserUseSessionId
+      ? await ctx.db
+          .query("browser_sessions")
+          .withIndex("by_browser_use_session_id", (q) =>
+            q.eq("browser_use_session_id", args.browserUseSessionId),
+          )
+          .unique()
+      : null;
+
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        label: args.label,
+        phase: args.phase,
+        live_url: args.liveUrl,
+        status: args.status,
+        step_count: args.stepCount,
+        last_step_summary: args.lastStepSummary,
+        screenshot_url: args.screenshotUrl,
+        updated_at: t,
+      });
+      return browserSessionRow({
+        ...existing,
+        label: args.label,
+        phase: args.phase,
+        live_url: args.liveUrl,
+        status: args.status,
+        step_count: args.stepCount,
+        last_step_summary: args.lastStepSummary,
+        screenshot_url: args.screenshotUrl,
+        updated_at: t,
+      });
+    }
+
+    const doc = {
+      legacyId: await nextLegacyId(ctx, "browser_sessions"),
+      job_id: args.jobId,
+      label: args.label,
+      phase: args.phase,
+      browser_use_session_id: args.browserUseSessionId,
+      live_url: args.liveUrl,
+      status: args.status,
+      step_count: args.stepCount,
+      last_step_summary: args.lastStepSummary,
+      screenshot_url: args.screenshotUrl,
+      error: null,
+      created_at: t,
+      updated_at: t,
+    };
+    await ctx.db.insert("browser_sessions", doc);
+    return browserSessionRow(doc);
+  },
+});
+
+export const updateBrowserSession = mutation({
+  args: {
+    id: v.number(),
+    patch: v.object({
+      live_url: v.optional(nullableString),
+      status: v.optional(v.string()),
+      step_count: v.optional(v.number()),
+      last_step_summary: v.optional(nullableString),
+      screenshot_url: v.optional(nullableString),
+      error: v.optional(nullableString),
+    }),
+  },
+  handler: async (ctx, args) => {
+    const session = await ctx.db
+      .query("browser_sessions")
+      .withIndex("by_legacyId", (q) => q.eq("legacyId", args.id))
+      .unique();
+    if (!session) return null;
+    await ctx.db.patch(session._id, { ...args.patch, updated_at: now() });
+    return null;
+  },
+});
+
+export const recordBrowserEvent = mutation({
+  args: {
+    jobId: v.number(),
+    browserSessionId: v.number(),
+    externalMessageId: nullableString,
+    type: v.string(),
+    summary: v.string(),
+    screenshotUrl: nullableString,
+    createdAt: v.number(),
+  },
+  handler: async (ctx, args) => {
+    if (args.externalMessageId) {
+      const existing = await ctx.db
+        .query("browser_events")
+        .withIndex("by_external_message_id", (q) => q.eq("external_message_id", args.externalMessageId))
+        .first();
+      if (existing) return browserEventRow(existing);
+    }
+
+    const doc = {
+      legacyId: await nextLegacyId(ctx, "browser_events"),
+      job_id: args.jobId,
+      browser_session_id: args.browserSessionId,
+      external_message_id: args.externalMessageId,
+      type: args.type,
+      summary: args.summary,
+      screenshot_url: args.screenshotUrl,
+      created_at: args.createdAt,
+    };
+    await ctx.db.insert("browser_events", doc);
+    return browserEventRow(doc);
+  },
+});
+
+export const getWatchSnapshot = query({
+  args: { token: v.string() },
+  handler: async (ctx, args) => {
+    const job = await ctx.db
+      .query("jobs")
+      .withIndex("by_watch_token", (q) => q.eq("watch_token", args.token))
+      .unique();
+    if (!job) return null;
+
+    const leads = await ctx.db
+      .query("leads")
+      .withIndex("by_job_id", (q) => q.eq("job_id", job.legacyId))
+      .take(50);
+    const calls = await ctx.db
+      .query("calls")
+      .withIndex("by_job_id", (q) => q.eq("job_id", job.legacyId))
+      .take(50);
+    const messages = await ctx.db
+      .query("messages")
+      .withIndex("by_job_id", (q) => q.eq("job_id", job.legacyId))
+      .take(100);
+    const browserSessions = await ctx.db
+      .query("browser_sessions")
+      .withIndex("by_job_id", (q) => q.eq("job_id", job.legacyId))
+      .take(20);
+    const browserEvents = await ctx.db
+      .query("browser_events")
+      .withIndex("by_job_id", (q) => q.eq("job_id", job.legacyId))
+      .take(200);
+
+    return {
+      job: jobRow(job),
+      leads: leads
+        .sort((a, b) => {
+          const ar = a.rank_score ?? -Infinity;
+          const br = b.rank_score ?? -Infinity;
+          if (br !== ar) return br - ar;
+          return a.legacyId - b.legacyId;
+        })
+        .map(leadRow),
+      calls: calls.sort((a, b) => b.created_at - a.created_at).map(callRow),
+      messages: messages.sort((a, b) => b.created_at - a.created_at).map(messageRow),
+      browserSessions: browserSessions.sort((a, b) => b.updated_at - a.updated_at).map(browserSessionRow),
+      browserEvents: browserEvents.sort((a, b) => b.created_at - a.created_at).map(browserEventRow),
+    };
   },
 });
 

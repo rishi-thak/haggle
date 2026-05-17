@@ -1,14 +1,20 @@
 import { api } from "../../convex/_generated/api";
 import { convexClient } from "./convexClient";
 import type {
+  BrowserEventRow,
+  BrowserSessionRow,
+  CallRow,
   EmailLeadMatch,
   EmailThread,
   Job,
   JobStatus,
   Lead,
   LeadStatus,
+  MessageRow,
   User,
+  WatchSnapshot,
 } from "./types";
+import { createWatchToken } from "./watch";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -33,6 +39,7 @@ function rowToJob(r: JsonRecord): Job {
     id: Number(r.id),
     user_id: Number(r.user_id),
     conversation_id: String(r.conversation_id),
+    watch_token: r.watch_token ? String(r.watch_token) : null,
     intent_raw: String(r.intent_raw),
     service: r.service ? String(r.service) : null,
     location: r.location ? String(r.location) : null,
@@ -59,6 +66,62 @@ function rowToLead(r: JsonRecord): Lead {
     status: String(r.status) as LeadStatus,
     quoted_price_cents: r.quoted_price_cents !== null ? Number(r.quoted_price_cents) : null,
     notes: r.notes ? String(r.notes) : null,
+    created_at: Number(r.created_at),
+  };
+}
+
+function rowToMessage(r: JsonRecord): MessageRow {
+  return {
+    id: Number(r.id),
+    job_id: Number(r.job_id),
+    direction: String(r.direction) as MessageRow["direction"],
+    channel: String(r.channel) as MessageRow["channel"],
+    body: String(r.body),
+    created_at: Number(r.created_at),
+  };
+}
+
+function rowToCall(r: JsonRecord): CallRow {
+  return {
+    id: Number(r.id),
+    lead_id: Number(r.lead_id),
+    job_id: Number(r.job_id),
+    agentphone_call_id: r.agentphone_call_id ? String(r.agentphone_call_id) : null,
+    transcript_json: r.transcript_json ? String(r.transcript_json) : null,
+    outcome: r.outcome ? String(r.outcome) : null,
+    quoted_price_cents: r.quoted_price_cents !== null ? Number(r.quoted_price_cents) : null,
+    created_at: Number(r.created_at),
+    ended_at: r.ended_at !== null ? Number(r.ended_at) : null,
+  };
+}
+
+function rowToBrowserSession(r: JsonRecord): BrowserSessionRow {
+  return {
+    id: Number(r.id),
+    job_id: Number(r.job_id),
+    label: String(r.label),
+    phase: String(r.phase),
+    browser_use_session_id: r.browser_use_session_id ? String(r.browser_use_session_id) : null,
+    live_url: r.live_url ? String(r.live_url) : null,
+    status: String(r.status),
+    step_count: Number(r.step_count),
+    last_step_summary: r.last_step_summary ? String(r.last_step_summary) : null,
+    screenshot_url: r.screenshot_url ? String(r.screenshot_url) : null,
+    error: r.error ? String(r.error) : null,
+    created_at: Number(r.created_at),
+    updated_at: Number(r.updated_at),
+  };
+}
+
+function rowToBrowserEvent(r: JsonRecord): BrowserEventRow {
+  return {
+    id: Number(r.id),
+    job_id: Number(r.job_id),
+    browser_session_id: Number(r.browser_session_id),
+    external_message_id: r.external_message_id ? String(r.external_message_id) : null,
+    type: String(r.type),
+    summary: String(r.summary),
+    screenshot_url: r.screenshot_url ? String(r.screenshot_url) : null,
     created_at: Number(r.created_at),
   };
 }
@@ -115,7 +178,10 @@ export async function createJob(args: {
   conversationId: string;
   intentRaw: string;
 }): Promise<Job> {
-  const row = await convexClient().mutation(api.repo.createJob, args);
+  const row = await convexClient().mutation(api.repo.createJob, {
+    ...args,
+    watchToken: createWatchToken(),
+  });
   return rowToJob(row as JsonRecord);
 }
 
@@ -131,6 +197,11 @@ export async function updateJob(
 
 export async function getJob(id: number): Promise<Job | null> {
   const row = await convexClient().query(api.repo.getJob, { id });
+  return row ? rowToJob(row as JsonRecord) : null;
+}
+
+export async function getJobByWatchToken(token: string): Promise<Job | null> {
+  const row = await convexClient().query(api.repo.getJobByWatchToken, { token });
   return row ? rowToJob(row as JsonRecord) : null;
 }
 
@@ -164,6 +235,58 @@ export async function logMessage(args: {
   body: string;
 }): Promise<void> {
   await convexClient().mutation(api.repo.logMessage, args);
+}
+
+export async function createBrowserSession(args: {
+  jobId: number;
+  label: string;
+  phase: string;
+  browserUseSessionId: string | null;
+  liveUrl: string | null;
+  status: string;
+  stepCount: number;
+  lastStepSummary: string | null;
+  screenshotUrl: string | null;
+}): Promise<BrowserSessionRow> {
+  const row = await convexClient().mutation(api.repo.createBrowserSession, args);
+  return rowToBrowserSession(row as JsonRecord);
+}
+
+export async function updateBrowserSession(
+  id: number,
+  patch: Partial<Pick<BrowserSessionRow, "live_url" | "status" | "step_count" | "last_step_summary" | "screenshot_url" | "error">>,
+): Promise<void> {
+  await convexClient().mutation(api.repo.updateBrowserSession, {
+    id,
+    patch: compact(patch as JsonRecord),
+  });
+}
+
+export async function recordBrowserEvent(args: {
+  jobId: number;
+  browserSessionId: number;
+  externalMessageId: string | null;
+  type: string;
+  summary: string;
+  screenshotUrl: string | null;
+  createdAt: number;
+}): Promise<BrowserEventRow> {
+  const row = await convexClient().mutation(api.repo.recordBrowserEvent, args);
+  return rowToBrowserEvent(row as JsonRecord);
+}
+
+export async function getWatchSnapshot(token: string): Promise<WatchSnapshot | null> {
+  const row = await convexClient().query(api.repo.getWatchSnapshot, { token });
+  if (!row) return null;
+  const snapshot = row as JsonRecord;
+  return {
+    job: rowToJob(snapshot.job as JsonRecord),
+    leads: (snapshot.leads as JsonRecord[]).map(rowToLead),
+    calls: (snapshot.calls as JsonRecord[]).map(rowToCall),
+    messages: (snapshot.messages as JsonRecord[]).map(rowToMessage),
+    browserSessions: (snapshot.browserSessions as JsonRecord[]).map(rowToBrowserSession),
+    browserEvents: (snapshot.browserEvents as JsonRecord[]).map(rowToBrowserEvent),
+  };
 }
 
 export async function recordCallStart(args: {
