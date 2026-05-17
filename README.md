@@ -9,7 +9,7 @@ Agentmail, recalls past provider context from Supermemory, and once you reply
 ## Architecture
 
 - **Next.js 15 (App Router)** — frontend + serverless route handlers.
-- **libsql / Turso** — shared conversation + job + lead + call log.
+- **Convex** — shared users, jobs, leads, calls, messages, and email threads.
 - **Vercel AI SDK + Gemini** — intent parsing, voice negotiation turns,
   call-result summarization.
 - **State machine in `src/lib/orchestrator.ts`** — every transition writes a
@@ -54,15 +54,15 @@ pnpm dev               # http://localhost:3000
 | `SPONGE_API_KEY` | dashboard.paysponge.com (agent-scoped key) |
 | `SPONGE_DEMO_PAYEE_ADDRESS` | An EVM address on Base — every "pay them" sends USDC here |
 | `GOOGLE_GENERATIVE_AI_API_KEY` | aistudio.google.com |
-| `DATABASE_URL` | `file:./haggle.db` locally; a Turso `libsql://…` URL in prod |
-| `DATABASE_AUTH_TOKEN` | Turso token (prod only) |
+| `CONVEX_URL` | Convex deployment URL, e.g. `https://your-deployment.convex.cloud` |
+| `NEXT_PUBLIC_CONVEX_URL` | Same Convex deployment URL for generated Convex tooling/client compatibility |
 
 ## Deploy
 
 ```bash
 vercel
 # Add the same env vars in the Vercel project settings.
-# On Vercel, swap DATABASE_URL to a Turso db (filesystem is read-only on Vercel).
+# Set CONVEX_URL and NEXT_PUBLIC_CONVEX_URL to the Convex deployment URL.
 ```
 
 After deploy, point Agentphone at the deployed URL:

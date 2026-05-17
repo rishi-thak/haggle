@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { ensureSchema } from "@/lib/db";
 import { handleInboundEmailReply } from "@/lib/orchestrator";
 
 export const runtime = "nodejs";
@@ -23,7 +22,6 @@ function getFirstEmailAddress(raw: unknown): string | null {
 }
 
 export async function POST(req: Request) {
-  await ensureSchema();
   const body = await req.json().catch(() => ({}));
   const eventType = String((body as Record<string, unknown>).eventType ?? (body as Record<string, unknown>).event_type ?? "");
   if (eventType !== "message.received") {

@@ -28,8 +28,7 @@ export const env = {
   GOOGLE_GENERATIVE_AI_API_KEY: opt("GOOGLE_GENERATIVE_AI_API_KEY"),
 
   PUBLIC_BASE_URL: opt("PUBLIC_BASE_URL", "http://localhost:3000"),
-  DATABASE_URL: opt("DATABASE_URL", "file:./haggle.db"),
-  DATABASE_AUTH_TOKEN: opt("DATABASE_AUTH_TOKEN"),
+  CONVEX_URL: opt("CONVEX_URL", opt("NEXT_PUBLIC_CONVEX_URL")),
 };
 
 export const requireEnv = need;

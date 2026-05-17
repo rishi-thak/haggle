@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { ensureSchema } from "@/lib/db";
 import { getOrCreateUser } from "@/lib/repo";
 import { addMemory } from "@/lib/supermemory";
 import { env } from "@/lib/env";
@@ -16,7 +15,6 @@ function normalizePhone(raw: string): string | null {
 }
 
 export async function POST(req: Request) {
-  await ensureSchema();
   const body = await req.json().catch(() => ({}));
   const phoneRaw = String(body.phone ?? "");
   const phone = normalizePhone(phoneRaw);

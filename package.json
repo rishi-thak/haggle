@@ -6,16 +6,17 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "db:init": "tsx scripts/init-db.ts"
+    "convex:dev": "convex dev",
+    "convex:codegen": "convex codegen"
   },
   "dependencies": {
     "@ai-sdk/google": "^2.0.0",
-    "@libsql/client": "^0.14.0",
     "@paysponge/sdk": "^0.1.94",
     "@supermemory/tools": "^2.0.0",
     "agentmail": "^0.5.0",
     "ai": "^5.0.0",
     "browser-use-sdk": "^3.6.0",
+    "convex": "^1.39.1",
     "motion": "^12.38.0",
     "next": "^15.5.0",
     "react": "^19.0.0",

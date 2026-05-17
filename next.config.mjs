@@ -5,7 +5,6 @@ const nextConfig = {
   // Fixes optional-dep resolution failures (e.g. @x402/fetch, viem/accounts)
   // pulled in transitively by agentmail and browser-use-sdk.
   serverExternalPackages: [
-    "@libsql/client",
     "@paysponge/sdk",
     "agentmail",
     "browser-use-sdk",

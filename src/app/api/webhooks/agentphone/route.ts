@@ -1,13 +1,11 @@
 import { NextResponse } from "next/server";
 import { verifyWebhookSignature } from "@/lib/agentphone";
 import { buildAgentphoneVoiceResponse } from "@/lib/agentphoneVoice";
-import { ensureSchema } from "@/lib/db";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
-  await ensureSchema();
   const raw = await req.text();
   const sig = req.headers.get("x-webhook-signature");
   const ts = req.headers.get("x-webhook-timestamp");
