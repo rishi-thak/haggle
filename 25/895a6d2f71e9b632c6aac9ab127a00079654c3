@@ -1,0 +1,27 @@
+src/lib/env.ts
+  s_684d6974a01083::t_aa74ca0add0a6f 31
+src/lib/repo.ts
+  s_684d6974a01083::t_c7b8ab5112ab20 1-21,31,48,66,85,87-89,94-95,99-100,104-105,109-110,118-119,126-129,133-134,138-139,143-147,151-152,156-157,166,174,183-185,187-189,193,197,210-211,220-221,229,235-238
+package.json
+  s_684d6974a01083::t_6f1551f860624e 9-10
+README.md
+  s_684d6974a01083::t_6f1551f860624e 12,57-58,65
+.env.example
+  s_684d6974a01083::t_6f1551f860624e 23-24
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "25895a6d2f71e9b632c6aac9ab127a00079654c3",
+  "prompts": {},
+  "sessions": {
+    "s_684d6974a01083": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e37a0-629c-7961-91e9-7648cdaf0dcb",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Evan Taylor <eltaylor1104@gmail.com>"
+    }
+  }
+}
