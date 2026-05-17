@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
+import { after } from "next/server";
 import { verifyWebhookSignature } from "@/lib/agentphone";
 import { buildAgentphoneVoiceResponse } from "@/lib/agentphoneVoice";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 120;
 
 export async function POST(req: Request) {
   const raw = await req.text();
@@ -40,10 +42,11 @@ export async function POST(req: Request) {
     if (!conversationId || !fromPhone || !text) {
       return NextResponse.json({ ok: false, error: "missing fields" }, { status: 400 });
     }
-    // Don't await: spec says full autonomy; we want to ack quickly.
     const { handleInboundIMessage } = await import("@/lib/orchestrator");
-    handleInboundIMessage({ conversationId, fromPhone, text }).catch((e) =>
-      console.error("[webhook/agentphone] inbound handler", e),
+    after(
+      handleInboundIMessage({ conversationId, fromPhone, text }).catch((e) =>
+        console.error("[webhook/agentphone] inbound handler", e),
+      ),
     );
     return NextResponse.json({ ok: true });
   }
@@ -56,8 +59,10 @@ export async function POST(req: Request) {
     const outcome = String(data.outcome ?? body.outcome ?? event.split(".").pop() ?? "");
     if (!callId) return NextResponse.json({ ok: false, error: "missing callId" }, { status: 400 });
     const { handleCallCompleted } = await import("@/lib/orchestrator");
-    handleCallCompleted({ agentphoneCallId: callId, transcript, outcome }).catch((e) =>
-      console.error("[webhook/agentphone] call handler", e),
+    after(
+      handleCallCompleted({ agentphoneCallId: callId, transcript, outcome }).catch((e) =>
+        console.error("[webhook/agentphone] call handler", e),
+      ),
     );
     return NextResponse.json({ ok: true });
   }

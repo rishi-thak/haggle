@@ -1,5 +1,5 @@
 import { sendIMessage, createOutboundCall } from "./agentphone";
-import { sendColdEmail } from "./agentmail";
+import { sendColdEmail, sendFollowUpEmail } from "./agentmail";
 import { enrichLead, scrapeLeads } from "./browseruse";
 import { parseIntent } from "./intent";
 import { payUsdc } from "./sponge";
@@ -455,18 +455,39 @@ export async function handleCallCompleted(args: {
     { type: "call_result", leadId: lead.id, jobId: job.id, outcome: result.outcome },
   );
 
+  // Send follow-up email recapping the call
+  if (lead.email) {
+    const followUp = await sendFollowUpEmail({
+      to: lead.email,
+      businessName: lead.name,
+      service: job.service ?? "service",
+      location: job.location ?? "",
+      timeframe: job.timeframe ?? "ASAP",
+      outcome: result.outcome,
+      quotedPriceCents: result.quotedPriceCents,
+      callSummary: result.summary,
+      fromName: "Haggle Concierge",
+    });
+    if (followUp.ok) {
+      await upsertEmailThread({
+        jobId: job.id,
+        leadId: lead.id,
+        inboxId: followUp.inboxId,
+        threadId: followUp.threadId ?? null,
+        outboundMessageId: followUp.messageId ?? null,
+        providerEmail: lead.email,
+        providerName: lead.name,
+        subject: followUp.subject ?? null,
+      });
+    }
+  }
+
   const currentJob = await getJob(job.id);
   if (!currentJob || isResolutionLockedJobStatus(currentJob.status)) return;
 
-  // If no answer, send fallback email if we have one
-  if (result.outcome === "no_answer" && lead.email) {
-    const ok = await sendFallbackEmailForLead({
-      job: currentJob,
-      lead,
-      budgetCents: ctx.budgetCents,
-      timeframe: ctx.timeframe,
-    });
-    if (ok) await updateLead(lead.id, { status: "emailed" });
+  // If no answer and no follow-up was sent (no email), try cold email as last resort
+  if (result.outcome === "no_answer" && !lead.email) {
+    // No email available — nothing more we can do for this lead
   }
 
   await resolveJobAfterLeadUpdate(currentJob.id);

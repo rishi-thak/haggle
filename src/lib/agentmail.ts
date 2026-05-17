@@ -46,6 +46,104 @@ export interface SentEmailResult {
   error?: string;
 }
 
+export interface FollowUpEmailParams {
+  to: string;
+  businessName: string;
+  service: string;
+  location: string;
+  timeframe: string;
+  outcome: "agreed" | "declined" | "no_answer" | "callback" | "ambiguous";
+  quotedPriceCents: number | null;
+  callSummary: string;
+  fromName?: string;
+}
+
+export async function sendFollowUpEmail(p: FollowUpEmailParams): Promise<SentEmailResult> {
+  const inboxId = await getOrCreateInbox();
+  if (!inboxId) {
+    return { ok: false, inboxId: null, error: "missing inbox id" };
+  }
+
+  const price = p.quotedPriceCents ? `$${(p.quotedPriceCents / 100).toFixed(0)}` : null;
+  const from = p.fromName ?? "Haggle Concierge";
+
+  let subject: string;
+  let text: string;
+
+  if (p.outcome === "agreed") {
+    subject = `Booking confirmation: ${p.service} with ${p.businessName}`;
+    text =
+      `Hi ${p.businessName} team,\n\n` +
+      `Thanks for the call! Just recapping what we discussed:\n\n` +
+      `• Service: ${p.service}\n` +
+      `• Location: ${p.location}\n` +
+      `• Timeframe: ${p.timeframe}\n` +
+      (price ? `• Agreed price: ${price}\n` : "") +
+      `\nWe'd like to confirm the booking. Please reply to let us know next steps (address, time, anything we should bring/prepare).\n\n` +
+      `Thanks,\n${from}`;
+  } else if (p.outcome === "callback" || p.outcome === "ambiguous") {
+    subject = `Following up: ${p.service} in ${p.location}`;
+    text =
+      `Hi ${p.businessName} team,\n\n` +
+      `Thanks for taking the time to chat. Here's a quick recap:\n\n` +
+      `• Service needed: ${p.service}\n` +
+      `• Location: ${p.location}\n` +
+      `• Timeframe: ${p.timeframe}\n` +
+      (price ? `• Price discussed: ${price}\n` : "") +
+      `\nIt sounded like you needed a bit more time or info to confirm. No rush — just reply here when you're ready to lock it in, or let us know if you have questions.\n\n` +
+      `Thanks,\n${from}`;
+  } else if (p.outcome === "declined") {
+    subject = `Thanks for your time — ${p.service}`;
+    text =
+      `Hi ${p.businessName} team,\n\n` +
+      `Thanks for taking our call about ${p.service} in ${p.location}. ` +
+      `We understand it didn't work out this time` +
+      (price ? ` at ${price}` : "") +
+      `.\n\n` +
+      `If anything changes or you'd like to reconsider, just reply to this email and we'll pick it back up.\n\n` +
+      `All the best,\n${from}`;
+  } else {
+    // no_answer
+    subject = `We tried calling — ${p.service} in ${p.location}`;
+    text =
+      `Hi ${p.businessName} team,\n\n` +
+      `We tried reaching you by phone about ${p.service} in ${p.location} (${p.timeframe}) but couldn't connect.\n\n` +
+      `Would you be available and able to provide a quote? Our budget is flexible for the right fit.\n\n` +
+      `Just reply here and we'll sort out the details.\n\n` +
+      `Thanks,\n${from}`;
+  }
+
+  const html = text
+    .split("\n")
+    .map((line) => (line.trim() === "" ? "<br/>" : `<p>${line}</p>`))
+    .join("");
+
+  try {
+    const sent = await client().inboxes.messages.send(inboxId, {
+      to: [p.to],
+      subject,
+      text,
+      html,
+    } as unknown as Record<string, never>);
+    const response = sent as unknown as { messageId?: string; threadId?: string };
+    return {
+      ok: true,
+      inboxId,
+      messageId: response.messageId,
+      threadId: response.threadId,
+      subject,
+    };
+  } catch (e) {
+    console.error("[agentmail] follow-up send failed", e);
+    return {
+      ok: false,
+      inboxId,
+      subject,
+      error: e instanceof Error ? e.message : String(e),
+    };
+  }
+}
+
 export async function sendColdEmail(p: ColdEmailParams): Promise<SentEmailResult> {
   const inboxId = await getOrCreateInbox();
   if (!inboxId) {
