@@ -2,6 +2,7 @@ import { sendIMessage, createOutboundCall } from "./agentphone";
 import { sendColdEmail, sendFollowUpEmail } from "./agentmail";
 import { enrichLead, scrapeLeads } from "./browseruse";
 import { parseIntent } from "./intent";
+import { triageMessage } from "./triage";
 import { payUsdc } from "./sponge";
 import { addMemory, recallProviderHistory, searchMemories } from "./supermemory";
 import { getNegotiationStatusSnapshot, summarizeCall } from "./negotiator";
@@ -172,9 +173,8 @@ async function resolveJobAfterLeadUpdate(jobId: number): Promise<void> {
   if (winner) {
     const claimed = await markJobAwaitingConfirmIfOpen(job.id, winner.id);
     if (!claimed) return;
-    const winText =
-      `✅ Best offer: ${winner.name} — $${((winner.quoted_price_cents ?? 0) / 100).toFixed(0)} for ${job.service}.\n` +
-      `Reply "pay them" to book and send payment, or "no" to keep waiting.`;
+    const price = ((winner.quoted_price_cents ?? 0) / 100).toFixed(0);
+    const winText = `${winner.name}, $${price} — want me to book and pay?`;
     await sendIMessage(job.conversation_id, winText, user?.phone);
     await logMessage({
       jobId: job.id,
@@ -192,8 +192,7 @@ async function resolveJobAfterLeadUpdate(jobId: number): Promise<void> {
   if (hasFollowUpLeads) {
     if (job.status !== "awaiting_callback") {
       await updateJob(job.id, { status: "awaiting_callback" });
-      const text =
-        "A provider replied, but they still need follow-up before a firm booking. I'll keep tracking responses and text you when there's a concrete offer.";
+      const text = "got a reply but they need to confirm still — i'll text you when it's solid";
       await sendIMessage(job.conversation_id, text, user?.phone);
       await logMessage({ jobId: job.id, direction: "outbound", channel: "imessage", body: text });
     }
@@ -202,8 +201,7 @@ async function resolveJobAfterLeadUpdate(jobId: number): Promise<void> {
 
   const failed = await markJobFailedIfUnresolved(job.id);
   if (!failed) return;
-  const failText =
-    `No one agreed at $${((job.budget_cents ?? 0) / 100).toFixed(0)}. Want to raise budget or try a different city?`;
+  const failText = "no one could match the budget — want me to try a higher number or different area?";
   await sendIMessage(job.conversation_id, failText, user?.phone);
   await logMessage({ jobId: job.id, direction: "outbound", channel: "imessage", body: failText });
 }
@@ -224,17 +222,23 @@ export async function handleInboundIMessage(args: {
 
   if (existing && !isTerminalJobStatus(existing.status)) {
     await logMessage({ jobId: existing.id, direction: "inbound", channel: "imessage", body: text });
-    await notify(
-      existing,
-      `Still working on this — current status: ${existing.status}. I'll text again the moment something changes.`,
-    );
+    await notify(existing, "still on it — i'll text you the moment something changes");
     return;
   }
 
+  // Triage: is this casual chat or a real service request?
+  const triage = await triageMessage(text);
+
+  if (triage.type === "chat") {
+    const user = await getOrCreateUser(fromPhone);
+    await sendIMessage(conversationId, triage.reply, user.phone);
+    return;
+  }
+
+  // It's a service request — kick off the full pipeline.
   const user = await getOrCreateUser(fromPhone);
   const job = await createJob({ userId: user.id, conversationId, intentRaw: text });
   await logMessage({ jobId: job.id, direction: "inbound", channel: "imessage", body: text });
-  // Fire-and-forget orchestration so we return 200 to the webhook quickly.
   runFullJob(job.id, user.container_tag).catch((e) => {
     console.error("[orchestrator] runFullJob crashed", e);
   });
@@ -244,7 +248,7 @@ async function runFullJob(jobId: number, containerTag: string): Promise<void> {
   const job0 = await getJob(jobId);
   if (!job0) return;
 
-  await notify(job0, "Got it — let me look around for options. One sec.");
+  await notify(job0, "on it — looking around for options rn");
 
   // 1. Parse intent
   const intent = await parseIntent(job0.intent_raw);
@@ -267,17 +271,14 @@ async function runFullJob(jobId: number, containerTag: string): Promise<void> {
   const job = (await getJob(jobId))!;
   await notify(
     job,
-    `Searching for ${intent.service} in ${intent.location}, budget $${(budgetCents / 100).toFixed(0)}, ${intent.timeframe}.`,
+    `${intent.service} in ${intent.location}, ${intent.timeframe} — searching now`,
   );
 
   // 2. Lead gen
   const scraped = await scrapeLeads(intent.service, intent.location, MAX_LEADS);
   if (!scraped.length) {
     await updateJob(jobId, { status: "failed" });
-    await notify(
-      job,
-      "Couldn't find any local providers via search. (Check BROWSER_USE_API_KEY?) Try again with a different phrasing.",
-    );
+    await notify(job, "couldn't find anyone for that — try rephrasing or a different area?");
     return;
   }
 
@@ -307,10 +308,10 @@ async function runFullJob(jobId: number, containerTag: string): Promise<void> {
   await updateJob(jobId, { status: "ranked" });
   await notify(
     job,
-    `Found ${leads.length} options. Top picks: ${leads
+    `found ${leads.length} options — top picks: ${leads
       .slice(0, 3)
       .map((l) => `${l.name}${l.rating ? ` (${l.rating}★)` : ""}`)
-      .join(", ")}. Pulling context from the web…`,
+      .join(", ")}`,
   );
 
   // 5. Enrich top N: per-lead browser-use task hits the provider's website
@@ -346,12 +347,7 @@ async function runFullJob(jobId: number, containerTag: string): Promise<void> {
     }
   }
 
-  const enrichedCount = enrichments.filter((r) => r.status === "fulfilled").length;
-  if (enrichedCount) {
-    await notify(job, `Got context on top ${enrichedCount}. Calling now.`);
-  } else {
-    await notify(job, `Context pull was thin. Calling top picks now.`);
-  }
+  await notify(job, "calling them now");
 
   // 6. Parallel outbound calls (capped)
   await updateJob(jobId, { status: "calling" });
@@ -389,19 +385,16 @@ async function runFullJob(jobId: number, containerTag: string): Promise<void> {
       });
       await updateLead(lead.id, { status: ok ? "emailed" : "no_answer" });
     }
-    await notify(job, `Emailed ${emailOnly.length} provider(s) without a listed phone.`);
+    await notify(job, `also emailed ${emailOnly.length} that didn't have a phone listed`);
   }
 
   // Status update — calls are now in flight. Resolution happens in handleCallCompleted.
-  await notify(
-    job,
-    `Dialed ${calling.length} provider(s). I'll text you back as they pick up and quote.`,
-  );
+  await notify(job, `dialed ${calling.length} — i'll text you when they quote`);
 
   // If we sent no calls AND no emails, fail out.
   if (!calling.length && !emailOnly.length) {
     await updateJob(jobId, { status: "failed" });
-    await notify(job, "No leads had a phone or email to reach. Try a different city?");
+    await notify(job, "none of them had a phone or email — try a different area?");
   }
 }
 
@@ -555,16 +548,16 @@ async function runPayment(jobId: number): Promise<void> {
   const user = await getUserByConversation(job.conversation_id);
 
   await updateJob(jobId, { status: "paying" });
-  await sendIMessage(job.conversation_id, `Paying ${lead.name} now…`, user?.phone);
+  await sendIMessage(job.conversation_id, `paying ${lead.name} now`, user?.phone);
 
   const amount = (lead.quoted_price_cents ?? 0) / 100;
   const result = await payUsdc(amount, env.SPONGE_DEMO_PAYEE_ADDRESS);
   if (result.ok) {
     await updateJob(jobId, { status: "complete" });
-    const url = result.explorerUrl ? `\nTx: ${result.explorerUrl}` : "";
+    const url = result.explorerUrl ? `\n${result.explorerUrl}` : "";
     await sendIMessage(
       job.conversation_id,
-      `Done — sent $${amount.toFixed(2)} USDC to demo payee for ${lead.name}.${url}`,
+      `done — $${amount.toFixed(0)} sent to ${lead.name}${url}`,
       user?.phone,
     );
     if (user) {
@@ -578,7 +571,7 @@ async function runPayment(jobId: number): Promise<void> {
     await updateJob(jobId, { status: "failed" });
     await sendIMessage(
       job.conversation_id,
-      `Payment failed: ${result.error ?? "unknown error"}.`,
+      `payment didn't go through — ${result.error ?? "not sure why"}, want me to retry?`,
       user?.phone,
     );
   }

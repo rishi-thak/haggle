@@ -43,11 +43,11 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: "missing fields" }, { status: 400 });
     }
     const { handleInboundIMessage } = await import("@/lib/orchestrator");
-    after(
-      handleInboundIMessage({ conversationId, fromPhone, text }).catch((e) =>
+    after(async () => {
+      await handleInboundIMessage({ conversationId, fromPhone, text }).catch((e) =>
         console.error("[webhook/agentphone] inbound handler", e),
-      ),
-    );
+      );
+    });
     return NextResponse.json({ ok: true });
   }
 
@@ -59,11 +59,11 @@ export async function POST(req: Request) {
     const outcome = String(data.outcome ?? body.outcome ?? event.split(".").pop() ?? "");
     if (!callId) return NextResponse.json({ ok: false, error: "missing callId" }, { status: 400 });
     const { handleCallCompleted } = await import("@/lib/orchestrator");
-    after(
-      handleCallCompleted({ agentphoneCallId: callId, transcript, outcome }).catch((e) =>
+    after(async () => {
+      await handleCallCompleted({ agentphoneCallId: callId, transcript, outcome }).catch((e) =>
         console.error("[webhook/agentphone] call handler", e),
-      ),
-    );
+      );
+    });
     return NextResponse.json({ ok: true });
   }
 
