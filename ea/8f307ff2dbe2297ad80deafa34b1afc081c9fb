@@ -1,0 +1,28 @@
+src/lib/agentphoneVoice.ts
+  s_684d6974a01083::t_8992289127da49 1-71
+src/app/api/webhooks/agentphone/voice/route.ts
+  s_684d6974a01083::t_a26d2f150934fa 4,23
+README.md
+  s_684d6974a01083::t_b914c725904328 30-31,47,70-73,85
+src/app/api/webhooks/agentphone/route.test.ts
+  s_684d6974a01083::t_382d636909bbff 1-31
+src/app/api/webhooks/agentphone/route.ts
+  s_684d6974a01083::t_4aa00c0bff6019 46,60
+  s_684d6974a01083::t_56ef1ac80629c7 3,28-32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "ea8f307ff2dbe2297ad80deafa34b1afc081c9fb",
+  "prompts": {},
+  "sessions": {
+    "s_684d6974a01083": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e37a0-629c-7961-91e9-7648cdaf0dcb",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Evan Taylor <eltaylor1104@gmail.com>"
+    }
+  }
+}
