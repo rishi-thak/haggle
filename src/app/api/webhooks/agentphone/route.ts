@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { verifyWebhookSignature } from "@/lib/agentphone";
+import { buildAgentphoneVoiceResponse } from "@/lib/agentphoneVoice";
 import { ensureSchema } from "@/lib/db";
-import { handleCallCompleted, handleInboundIMessage } from "@/lib/orchestrator";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,6 +25,12 @@ export async function POST(req: Request) {
   const event = String(body.event ?? "");
   const channel = String(body.channel ?? "");
 
+  // Agentphone's current webhook model sends both SMS and voice turns to the
+  // configured webhook URL. Voice turns must synchronously return text to speak.
+  if (event === "agent.message" && channel === "voice") {
+    return NextResponse.json(await buildAgentphoneVoiceResponse(body));
+  }
+
   // Inbound iMessage
   if (event === "agent.message" && (channel === "imessage" || channel === "sms")) {
     const data = body.data as Record<string, unknown>;
@@ -37,6 +43,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: "missing fields" }, { status: 400 });
     }
     // Don't await: spec says full autonomy; we want to ack quickly.
+    const { handleInboundIMessage } = await import("@/lib/orchestrator");
     handleInboundIMessage({ conversationId, fromPhone, text }).catch((e) =>
       console.error("[webhook/agentphone] inbound handler", e),
     );
@@ -50,6 +57,7 @@ export async function POST(req: Request) {
     const transcript = String(data.transcript ?? body.transcript ?? "");
     const outcome = String(data.outcome ?? body.outcome ?? event.split(".").pop() ?? "");
     if (!callId) return NextResponse.json({ ok: false, error: "missing callId" }, { status: 400 });
+    const { handleCallCompleted } = await import("@/lib/orchestrator");
     handleCallCompleted({ agentphoneCallId: callId, transcript, outcome }).catch((e) =>
       console.error("[webhook/agentphone] call handler", e),
     );

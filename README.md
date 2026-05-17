@@ -27,8 +27,8 @@ new → searching → ranked → calling → (per-lead) negotiating
 |---|---|
 | `GET  /` | One-page React form: phone → onboard |
 | `POST /api/onboard` | Creates a user row + a Supermemory profile |
-| `POST /api/webhooks/agentphone` | Inbound iMessage *and* call lifecycle events |
-| `POST /api/webhooks/agentphone/voice` | Voice webhook — returns the next thing Haggle should say (Gemini) |
+| `POST /api/webhooks/agentphone` | Agentphone webhook for inbound iMessage, voice turns, and call lifecycle events |
+| `POST /api/webhooks/agentphone/voice` | Legacy voice-only webhook — kept for older Agentphone setups |
 | `POST /api/webhooks/agentmail` | Inbound email replies from cold-emailed leads |
 
 ## Setup
@@ -44,7 +44,7 @@ pnpm dev               # http://localhost:3000
 | Var | How to get it |
 |---|---|
 | `AGENTPHONE_API_KEY` | Agentphone dashboard |
-| `AGENTPHONE_AGENT_ID` | Create an agent on Agentphone with **voice mode = webhook**, set the voice webhook URL to `$PUBLIC_BASE_URL/api/webhooks/agentphone/voice` and the general webhook to `$PUBLIC_BASE_URL/api/webhooks/agentphone` |
+| `AGENTPHONE_AGENT_ID` | Create an agent on Agentphone with **voice mode = webhook** and set the project default or per-agent webhook URL to `$PUBLIC_BASE_URL/api/webhooks/agentphone` |
 | `AGENTPHONE_FROM_NUMBER` | Your provisioned iMessage number (e.g. `+14155550100`) |
 | `AGENTPHONE_WEBHOOK_SECRET` | Optional — if set, we verify HMAC signatures |
 | `AGENTMAIL_API_KEY` | agentmail.to |
@@ -67,8 +67,10 @@ vercel
 
 After deploy, point Agentphone at the deployed URL:
 
-- General webhook: `https://YOUR.vercel.app/api/webhooks/agentphone`
-- Voice webhook:   `https://YOUR.vercel.app/api/webhooks/agentphone/voice`
+- Project default webhook: `https://YOUR.vercel.app/api/webhooks/agentphone`
+
+Agentphone sends SMS events and voice turns to that same URL. The app returns
+`{ "text": "..." }` for `channel: "voice"` events.
 
 ## End-to-end flow
 
@@ -80,7 +82,7 @@ After deploy, point Agentphone at the deployed URL:
    - DB inserts + rank →
    - `createOutboundCall` × N in parallel (Agentphone voice webhook mode) →
    - phone-less leads → `sendColdEmail` (Agentmail).
-4. Each negotiation turn hits `/api/webhooks/agentphone/voice` and Gemini
+4. Each negotiation turn hits `/api/webhooks/agentphone` with `channel: "voice"` and Gemini
    produces the response (with Supermemory context about prior dealings with
    that provider).
 5. When a call ends, Agentphone fires `agent.call.completed` →
