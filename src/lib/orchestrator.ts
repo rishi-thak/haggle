@@ -1,6 +1,6 @@
 import { sendIMessage, createOutboundCall } from "./agentphone";
 import { sendColdEmail } from "./agentmail";
-import { scrapeLeads } from "./browseruse";
+import { enrichLead, scrapeLeads } from "./browseruse";
 import { parseIntent } from "./intent";
 import { payUsdc } from "./sponge";
 import { addMemory, recallProviderHistory, searchMemories } from "./supermemory";
@@ -30,6 +30,7 @@ import { env } from "./env";
 
 const MAX_LEADS = 8;
 const MAX_PARALLEL_CALLS = 4;
+const ENRICH_TOP_N = 3;
 const TERMINAL_JOB_STATUSES = new Set<Job["status"]>(["complete", "failed"]);
 const RESOLUTION_LOCKED_JOB_STATUSES = new Set<Job["status"]>(["awaiting_confirm", "paying", "complete", "failed"]);
 const ACTIVE_LEAD_STATUSES = new Set<Lead["status"]>(["pending", "calling", "negotiating", "emailed"]);
@@ -309,10 +310,50 @@ async function runFullJob(jobId: number, containerTag: string): Promise<void> {
     `Found ${leads.length} options. Top picks: ${leads
       .slice(0, 3)
       .map((l) => `${l.name}${l.rating ? ` (${l.rating}★)` : ""}`)
-      .join(", ")}. Calling now.`,
+      .join(", ")}. Pulling context from the web…`,
   );
 
-  // 5. Parallel outbound calls (capped)
+  // 5. Enrich top N: per-lead browser-use task hits the provider's website
+  // (email + pricing) and a Reddit sentiment search.
+  const toEnrich = leads.slice(0, ENRICH_TOP_N);
+  const enrichments = await Promise.allSettled(
+    toEnrich.map((lead) =>
+      enrichLead({
+        name: lead.name,
+        service: intent.service,
+        location: intent.location,
+        sourceUrl: lead.source_url ?? undefined,
+      }),
+    ),
+  );
+
+  for (let i = 0; i < toEnrich.length; i++) {
+    const lead = toEnrich[i];
+    const r = enrichments[i];
+    if (r.status !== "fulfilled") continue;
+    const enr = r.value;
+    const notesParts: string[] = [];
+    if (enr.websiteSummary) notesParts.push(`Website: ${enr.websiteSummary}`);
+    if (enr.redditSentiment && enr.redditSentiment !== "unknown")
+      notesParts.push(`Reddit sentiment: ${enr.redditSentiment}.`);
+    if (enr.redditNotes) notesParts.push(`Reddit notes: ${enr.redditNotes}`);
+    const patch: Partial<Lead> = {};
+    if (enr.email && !lead.email) patch.email = enr.email;
+    if (notesParts.length) patch.notes = notesParts.join(" ");
+    if (Object.keys(patch).length) {
+      await updateLead(lead.id, patch);
+      Object.assign(lead, patch);
+    }
+  }
+
+  const enrichedCount = enrichments.filter((r) => r.status === "fulfilled").length;
+  if (enrichedCount) {
+    await notify(job, `Got context on top ${enrichedCount}. Calling now.`);
+  } else {
+    await notify(job, `Context pull was thin. Calling top picks now.`);
+  }
+
+  // 6. Parallel outbound calls (capped)
   await updateJob(jobId, { status: "calling" });
   const calling = leads.filter((l) => l.phone).slice(0, MAX_PARALLEL_CALLS);
   const emailOnly = leads.filter((l) => !l.phone && l.email);
@@ -394,15 +435,19 @@ export async function handleCallCompleted(args: {
     timeframe: job.timeframe ?? "ASAP",
     userPreferences: [],
     pastProviderNotes: past.summary,
+    enrichmentNotes: lead.notes ?? undefined,
     businessName: lead.name,
   };
 
   const result = await summarizeCall(ctx, args.transcript);
   const snapshot = getNegotiationStatusSnapshot(result.outcome);
+  // Preserve the pre-call enrichment notes; append the call summary so we don't
+  // lose Reddit/website context as part of recording the outcome.
+  const combinedNotes = [lead.notes, result.summary].filter(Boolean).join(" · ");
   await updateLead(lead.id, {
     status: snapshot.leadStatus,
     quoted_price_cents: result.quotedPriceCents,
-    notes: result.summary,
+    notes: combinedNotes,
   });
   await addMemory(
     containerTag,

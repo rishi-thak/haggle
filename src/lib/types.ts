@@ -121,5 +121,7 @@ export interface NegotiationContext {
   timeframe: string;
   userPreferences: string[];
   pastProviderNotes: string;
+  /** Stage-2 enrichment: website summary + Reddit sentiment for this specific provider. */
+  enrichmentNotes?: string;
   businessName: string;
 }

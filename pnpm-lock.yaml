@@ -44,6 +44,9 @@ importers:
       zod:
         specifier: ^3.25.0
         version: 3.25.76
+      zod4:
+        specifier: npm:zod@^4.4.3
+        version: zod@4.4.3
     devDependencies:
       '@types/node':
         specifier: ^22.0.0

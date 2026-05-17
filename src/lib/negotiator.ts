@@ -16,12 +16,16 @@ export function buildSystemPrompt(ctx: NegotiationContext): string {
   const history = ctx.pastProviderNotes
     ? `Prior notes about this provider:\n${ctx.pastProviderNotes}\n`
     : "";
+  const enrichment = ctx.enrichmentNotes
+    ? `Web research on this provider (use as tactical intel, don't read aloud):\n${ctx.enrichmentNotes}\n`
+    : "";
   return (
     `You are Haggle, a polite but firm negotiation assistant calling on behalf of a customer.\n` +
     `Goal: book ${ctx.service} in ${ctx.location} for $${budget} or less, ${ctx.timeframe}.\n\n` +
     `Calling: ${ctx.businessName}\n\n` +
     memHints +
     history +
+    enrichment +
     `\nRules:\n` +
     `1. Keep responses short and conversational (1-2 sentences).\n` +
     `2. Lead by asking for availability and a quote.\n` +

@@ -58,6 +58,7 @@ export async function buildAgentphoneVoiceResponse(body: Record<string, unknown>
     timeframe: job.timeframe ?? "ASAP",
     userPreferences: [],
     pastProviderNotes: past.summary,
+    enrichmentNotes: lead.notes ?? undefined,
     businessName: lead.name,
   };
 
