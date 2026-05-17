@@ -1,0 +1,33 @@
+convex/_generated/dataModel.d.ts
+  s_684d6974a01083::t_efab8e557db331 1-60
+convex/_generated/api.d.ts
+  s_684d6974a01083::t_efab8e557db331 1-49
+convex/repo.ts
+  s_684d6974a01083::t_ad956d36fc8a00 1-641
+convex/_generated/api.js
+  s_684d6974a01083::t_efab8e557db331 1-23
+convex/_generated/server.d.ts
+  s_684d6974a01083::t_efab8e557db331 1-143
+src/lib/convexClient.ts
+  s_684d6974a01083::t_582f85959e0825 1-13
+convex/_generated/server.js
+  s_684d6974a01083::t_efab8e557db331 1-93
+convex/schema.ts
+  s_684d6974a01083::t_015b41e1f88763 1-104
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "06170296252ee956b0db270e3ac17c9030997f49",
+  "prompts": {},
+  "sessions": {
+    "s_684d6974a01083": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e37a0-629c-7961-91e9-7648cdaf0dcb",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Evan Taylor <eltaylor1104@gmail.com>"
+    }
+  }
+}
