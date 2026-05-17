@@ -32,3 +32,6 @@ pnpm-debug.log*
 .idea/
 *.swp
 *.swo
+
+# Sentry Config File
+.env.sentry-build-plugin
