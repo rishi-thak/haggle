@@ -1,7 +1,12 @@
-import { generateText, generateObject } from "ai";
+import { generateText } from "ai";
 import { z } from "zod";
 import { gemini, GEMINI_FAST } from "./gemini";
-import type { NegotiationContext } from "./types";
+import {
+  NEGOTIATION_OUTCOME_VALUES,
+  type NegotiationContext,
+  type NegotiationOutcome,
+  type NegotiationStatusSnapshot,
+} from "./types";
 
 export function buildSystemPrompt(ctx: NegotiationContext): string {
   const budget = (ctx.budgetCents / 100).toFixed(0);
@@ -27,18 +32,68 @@ export function buildSystemPrompt(ctx: NegotiationContext): string {
   );
 }
 
+export interface NegotiationSummary {
+  outcome: NegotiationOutcome;
+  quotedPriceCents: number | null;
+  summary: string;
+}
+
 export const NegotiationOutcomeSchema = z.object({
-  outcome: z.enum(["agreed", "declined", "no_answer", "callback", "ambiguous"]),
+  outcome: z.enum(NEGOTIATION_OUTCOME_VALUES),
   quotedPriceCents: z.number().int().nullable(),
   summary: z.string().describe("1-2 sentence summary of the call result"),
 });
 
-export type NegotiationOutcome = z.infer<typeof NegotiationOutcomeSchema>;
+const CALLBACK_HINTS = [
+  /\bcall (?:me|us|back)\b/i,
+  /\bcallback\b/i,
+  /\bring\b.*\bback\b/i,
+  /\breach out\b.*\blater\b/i,
+] as const;
+
+const DECLINE_HINTS = [
+  /\bcan(?:not|'t)\b/i,
+  /\bwon't\b/i,
+  /\bnot interested\b/i,
+  /\bwe (?:do not|don't) provide\b/i,
+  /\btoo (?:busy|booked)\b/i,
+] as const;
+
+const AMBIGUOUS_HINTS = [
+  /\bmaybe\b/i,
+  /\bnot sure\b/i,
+  /\bdepends\b/i,
+  /\bcheck (?:the )?schedule\b/i,
+  /\bneed to confirm\b/i,
+] as const;
+
+const NO_ANSWER_HINTS = [
+  /\bvoicemail\b/i,
+  /\bno answer\b/i,
+  /\bdisconnected\b/i,
+  /\bline busy\b/i,
+] as const;
+
+const NEGOTIATION_STATUS_MAP: Record<NegotiationOutcome, NegotiationStatusSnapshot> = {
+  agreed: { leadStatus: "agreed", suggestedJobStatus: "awaiting_confirm", isTerminal: true },
+  declined: { leadStatus: "declined", suggestedJobStatus: "negotiating", isTerminal: true },
+  no_answer: { leadStatus: "no_answer", suggestedJobStatus: "calling", isTerminal: false },
+  callback: { leadStatus: "callback", suggestedJobStatus: "awaiting_callback", isTerminal: false },
+  ambiguous: { leadStatus: "ambiguous", suggestedJobStatus: "negotiating", isTerminal: false },
+};
+
+/**
+ * Central outcome-to-status mapping so callers do not collapse callback/unclear
+ * calls into a hard decline.
+ */
+export function getNegotiationStatusSnapshot(outcome: NegotiationOutcome): NegotiationStatusSnapshot {
+  return NEGOTIATION_STATUS_MAP[outcome];
+}
 
 export async function summarizeCall(
   ctx: NegotiationContext,
   transcript: string,
-): Promise<NegotiationOutcome> {
+): Promise<NegotiationSummary> {
   if (!transcript.trim()) {
     return { outcome: "no_answer", quotedPriceCents: null, summary: "No answer" };
   }
@@ -46,30 +101,71 @@ export async function summarizeCall(
     return naiveSummarize(transcript, ctx);
   }
   try {
-    const { object } = await generateObject({
+    const { text } = await generateText({
       model: gemini()(GEMINI_FAST),
-      schema: NegotiationOutcomeSchema,
       prompt:
         `Negotiation transcript with ${ctx.businessName}. Target was $${(ctx.budgetCents / 100).toFixed(0)} for ${ctx.service}.\n\n` +
         `Transcript:\n${transcript}\n\n` +
-        `Decide outcome and extract the final quoted price in cents (or null).`,
+        `Return strict JSON with keys outcome, quotedPriceCents, and summary. ` +
+        `Outcome must be one of: ${NEGOTIATION_OUTCOME_VALUES.join(", ")}. ` +
+        `quotedPriceCents must be an integer number of cents or null. ` +
+        `summary must be 1-2 sentences.`,
+      maxOutputTokens: 160,
     });
-    return object;
+    return NegotiationOutcomeSchema.parse(JSON.parse(text)) as NegotiationSummary;
   } catch (e) {
     console.error("[negotiator] summarize failed, falling back", e);
     return naiveSummarize(transcript, ctx);
   }
 }
 
-function naiveSummarize(transcript: string, ctx: NegotiationContext): NegotiationOutcome {
-  const m = transcript.match(/\$\s*(\d{2,5})/);
-  const priceCents = m ? Number(m[1]) * 100 : null;
+function naiveSummarize(transcript: string, ctx: NegotiationContext): NegotiationSummary {
+  const priceMatches = Array.from(transcript.matchAll(/\$\s*(\d{2,5})/g));
+  const latestPrice = priceMatches.at(-1)?.[1];
+  const priceCents = latestPrice ? Number(latestPrice) * 100 : null;
+  const normalized = transcript.replace(/\s+/g, " ").trim();
   const agreed = priceCents !== null && priceCents <= ctx.budgetCents;
+  const callbackRequested = CALLBACK_HINTS.some((pattern) => pattern.test(normalized));
+  const noAnswer = NO_ANSWER_HINTS.some((pattern) => pattern.test(normalized));
+  const clearlyDeclined = DECLINE_HINTS.some((pattern) => pattern.test(normalized));
+  const ambiguous = AMBIGUOUS_HINTS.some((pattern) => pattern.test(normalized));
+
+  let outcome: NegotiationOutcome;
+  if (agreed) {
+    outcome = "agreed";
+  } else if (callbackRequested) {
+    outcome = "callback";
+  } else if (noAnswer || normalized.length < 24) {
+    outcome = "no_answer";
+  } else if (clearlyDeclined) {
+    outcome = "declined";
+  } else if (priceCents !== null || ambiguous || normalized.length > 50) {
+    outcome = "ambiguous";
+  } else {
+    outcome = "no_answer";
+  }
+
   return {
-    outcome: agreed ? "agreed" : transcript.length > 50 ? "declined" : "no_answer",
+    outcome,
     quotedPriceCents: priceCents,
-    summary: agreed ? `Quoted $${(priceCents! / 100).toFixed(0)}, within budget.` : "Out of budget or unclear.",
+    summary: summarizeFallbackOutcome(outcome, priceCents),
   };
+}
+
+function summarizeFallbackOutcome(outcome: NegotiationOutcome, priceCents: number | null): string {
+  if (outcome === "agreed" && priceCents !== null) {
+    return `Quoted $${(priceCents / 100).toFixed(0)}, within budget.`;
+  }
+  if (outcome === "declined" && priceCents !== null) {
+    return `Quoted $${(priceCents / 100).toFixed(0)}, above budget or declined.`;
+  }
+  if (outcome === "callback") {
+    return "Provider asked for a callback before confirming price or availability.";
+  }
+  if (outcome === "ambiguous") {
+    return "Call ended without a firm yes or no.";
+  }
+  return "No answer or no usable pricing details.";
 }
 
 /**

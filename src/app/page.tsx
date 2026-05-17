@@ -12,30 +12,12 @@
  *   - a short three-step row
  *   - footer
  *
- * Motion is implemented with `motion/react` springs (no easing curves).
+ * Motion is intentionally minimal; the page leans on layout and CSS transitions.
  * No boxes, no bordered grids, no glow blurs.
  * ───────────────────────────────────────────────────────── */
 
 import { useState } from "react";
 import Image from "next/image";
-import { motion, type Variants } from "motion/react";
-
-const SPRING = { type: "spring" as const, stiffness: 260, damping: 28 };
-
-const rise: Variants = {
-  hidden: { opacity: 0, y: 14 },
-  show: { opacity: 1, y: 0, transition: SPRING },
-};
-
-const fade: Variants = {
-  hidden: { opacity: 0 },
-  show: { opacity: 1, transition: { duration: 0.4 } },
-};
-
-const stagger = (gap = 0.07): Variants => ({
-  hidden: {},
-  show: { transition: { staggerChildren: gap, delayChildren: 0.05 } },
-});
 
 type Bubble = { role: "me" | "them"; text: string; meta?: string };
 const THREAD: Bubble[] = [
@@ -63,12 +45,7 @@ export default function Home() {
 
 function Nav() {
   return (
-    <motion.nav
-      initial={{ opacity: 0, y: -6 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={SPRING}
-      className="relative z-10"
-    >
+    <nav className="relative z-10">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-5">
         <a href="#" className="flex items-center gap-2.5">
           <div className="relative size-7 overflow-hidden">
@@ -84,7 +61,7 @@ function Nav() {
           </a>
         </div>
       </div>
-    </motion.nav>
+    </nav>
   );
 }
 
@@ -93,49 +70,34 @@ function Nav() {
 function Hero() {
   return (
     <section className="relative">
-      <motion.div
-        variants={stagger(0.08)}
-        initial="hidden"
-        animate="show"
-        className="mx-auto flex max-w-3xl flex-col items-center px-6 pt-20 pb-12 text-center sm:pt-28"
-      >
-        <motion.div
-          variants={rise}
-          className="inline-flex items-center gap-2 rounded-full border border-ink-100 bg-white px-3 py-1 text-[12px] font-medium text-ink-500"
-        >
+      <div className="mx-auto flex max-w-3xl flex-col items-center px-6 pt-20 pb-12 text-center sm:pt-28">
+        <div className="inline-flex items-center gap-2 rounded-full border border-ink-100 bg-white px-3 py-1 text-[12px] font-medium text-ink-500">
           <span className="size-1.5 animate-ping-dot rounded-full bg-haggle-500" />
           iMessage-native concierge
-        </motion.div>
+        </div>
 
-        <motion.h1
-          variants={rise}
+        <h1
           className="mt-7 font-display text-[clamp(2.75rem,7vw,5.5rem)] font-black leading-[0.98] tracking-[-0.02em]"
           style={{ fontVariationSettings: "'opsz' 144, 'SOFT' 50" }}
         >
           We call. We <span className="text-haggle-500">haggle</span>.
           <br className="hidden sm:block" /> You save.
-        </motion.h1>
+        </h1>
 
-        <motion.p
-          variants={rise}
-          className="mt-6 max-w-xl text-[17px] leading-relaxed text-ink-500"
-        >
+        <p className="mt-6 max-w-xl text-[17px] leading-relaxed text-ink-500">
           Text one number for any local service — car detail, locksmith, mover,
           dog groomer. We dial providers in parallel, negotiate against your
           budget, and book it. You never leave iMessage.
-        </motion.p>
+        </p>
 
-        <motion.div variants={rise} className="mt-10 w-full max-w-md">
+        <div className="mt-10 w-full max-w-md">
           <OnboardForm />
-        </motion.div>
+        </div>
 
-        <motion.p
-          variants={fade}
-          className="mt-4 text-[12px] text-ink-400"
-        >
+        <p className="mt-4 text-[12px] text-ink-400">
           Free to start. No credit card. Cancel anytime by saying so.
-        </motion.p>
-      </motion.div>
+        </p>
+      </div>
     </section>
   );
 }
@@ -170,12 +132,7 @@ function OnboardForm() {
 
   if (result) {
     return (
-      <motion.div
-        initial={{ opacity: 0, y: 8, scale: 0.99 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        transition={SPRING}
-        className="text-left"
-      >
+      <div className="text-left">
         <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-haggle-500">
           You&apos;re in · text this number
         </div>
@@ -191,7 +148,7 @@ function OnboardForm() {
         {!result.iMessageNumber && result.instructions && (
           <p className="mt-3 text-[13px] text-amber-700">{result.instructions}</p>
         )}
-      </motion.div>
+      </div>
     );
   }
 
@@ -229,18 +186,9 @@ function ThreadProof() {
   return (
     <section id="thread" className="relative">
       <div className="mx-auto max-w-md px-6 pb-24">
-        <motion.div
-          variants={stagger(0.08)}
-          initial="hidden"
-          whileInView="show"
-          viewport={{ once: true, amount: 0.2 }}
-          className="space-y-2"
-        >
+        <div className="space-y-2">
           {/* header */}
-          <motion.div
-            variants={rise}
-            className="mb-6 flex flex-col items-center gap-1.5 text-center"
-          >
+          <div className="mb-6 flex flex-col items-center gap-1.5 text-center">
             <div className="relative flex size-11 items-center justify-center overflow-hidden rounded-full bg-haggle-500">
               <span className="font-display text-xl font-black text-white">H</span>
             </div>
@@ -248,14 +196,10 @@ function ThreadProof() {
             <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-ink-400">
               +1 415 555 0100 · iMessage
             </div>
-          </motion.div>
+          </div>
 
           {THREAD.map((b, i) => (
-            <motion.div
-              key={i}
-              variants={rise}
-              className={`flex flex-col ${b.role === "me" ? "items-end" : "items-start"}`}
-            >
+            <div key={i} className={`flex flex-col ${b.role === "me" ? "items-end" : "items-start"}`}>
               {b.meta && (
                 <span className="mb-1 font-mono text-[10px] uppercase tracking-[0.18em] text-ink-300">
                   {b.meta}
@@ -271,10 +215,10 @@ function ThreadProof() {
               >
                 {b.text}
               </div>
-            </motion.div>
+            </div>
           ))}
 
-          <motion.div variants={rise} className="flex items-center">
+          <div className="flex items-center">
             <span className="bubble-them flex items-center gap-1 bg-ink-50 px-3 py-2.5">
               {[0, 1, 2].map((i) => (
                 <span
@@ -284,8 +228,8 @@ function ThreadProof() {
                 />
               ))}
             </span>
-          </motion.div>
-        </motion.div>
+          </div>
+        </div>
       </div>
     </section>
   );
@@ -301,23 +245,17 @@ function Steps() {
   ];
   return (
     <section id="faq" className="relative border-t border-ink-100 bg-white">
-      <motion.div
-        variants={stagger(0.07)}
-        initial="hidden"
-        whileInView="show"
-        viewport={{ once: true, amount: 0.2 }}
-        className="mx-auto max-w-5xl px-6 py-20"
-      >
-        <motion.div variants={rise} className="font-mono text-[11px] uppercase tracking-[0.18em] text-haggle-500">
+      <div className="mx-auto max-w-5xl px-6 py-20">
+        <div className="font-mono text-[11px] uppercase tracking-[0.18em] text-haggle-500">
           · How it works
-        </motion.div>
-        <motion.h2 variants={rise} className="mt-3 max-w-2xl font-display text-3xl font-black leading-tight tracking-tight sm:text-4xl">
+        </div>
+        <h2 className="mt-3 max-w-2xl font-display text-3xl font-black leading-tight tracking-tight sm:text-4xl">
           One thread, start to finish.
-        </motion.h2>
+        </h2>
 
         <div className="mt-12 grid grid-cols-1 gap-x-12 gap-y-10 sm:grid-cols-3">
           {items.map((it, i) => (
-            <motion.div key={it.k} variants={rise} className="flex flex-col gap-3">
+            <div key={it.k} className="flex flex-col gap-3">
               <div className="flex items-baseline gap-3">
                 <span className="font-mono text-[11px] font-bold text-haggle-500">
                   {String(i + 1).padStart(2, "0")}
@@ -325,10 +263,10 @@ function Steps() {
                 <span className="font-display text-xl font-bold tracking-tight">{it.k}</span>
               </div>
               <p className="text-[15px] leading-relaxed text-ink-500">{it.v}</p>
-            </motion.div>
+            </div>
           ))}
         </div>
-      </motion.div>
+      </div>
     </section>
   );
 }

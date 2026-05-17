@@ -1,9 +1,20 @@
+export const NEGOTIATION_OUTCOME_VALUES = [
+  "agreed",
+  "declined",
+  "no_answer",
+  "callback",
+  "ambiguous",
+] as const;
+
+export type NegotiationOutcome = (typeof NEGOTIATION_OUTCOME_VALUES)[number];
+
 export type JobStatus =
   | "new"
   | "searching"
   | "ranked"
   | "calling"
   | "negotiating"
+  | "awaiting_callback"
   | "email_fallback"
   | "awaiting_confirm"
   | "paying"
@@ -17,7 +28,15 @@ export type LeadStatus =
   | "agreed"
   | "declined"
   | "no_answer"
+  | "callback"
+  | "ambiguous"
   | "emailed";
+
+export interface NegotiationStatusSnapshot {
+  leadStatus: LeadStatus;
+  suggestedJobStatus: JobStatus;
+  isTerminal: boolean;
+}
 
 export interface User {
   id: number;
@@ -64,10 +83,33 @@ export interface CallRow {
   job_id: number;
   agentphone_call_id: string | null;
   transcript_json: string | null;
-  outcome: string | null;
+  outcome: NegotiationOutcome | string | null;
   quoted_price_cents: number | null;
   created_at: number;
   ended_at: number | null;
+}
+
+export interface EmailThread {
+  id: number;
+  job_id: number;
+  lead_id: number;
+  inbox_id: string | null;
+  thread_id: string | null;
+  outbound_message_id: string | null;
+  last_inbound_message_id: string | null;
+  provider_email: string | null;
+  provider_name: string | null;
+  subject: string | null;
+  created_at: number;
+  updated_at: number;
+  last_outbound_at: number;
+  last_inbound_at: number | null;
+}
+
+export interface EmailLeadMatch {
+  job: Job;
+  lead: Lead;
+  emailThread: EmailThread | null;
 }
 
 export interface NegotiationContext {

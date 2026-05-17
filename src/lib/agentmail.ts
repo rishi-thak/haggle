@@ -37,9 +37,20 @@ export interface ColdEmailParams {
   replyHandle?: string;
 }
 
-export async function sendColdEmail(p: ColdEmailParams): Promise<boolean> {
+export interface SentEmailResult {
+  ok: boolean;
+  inboxId: string | null;
+  messageId?: string;
+  threadId?: string;
+  subject?: string;
+  error?: string;
+}
+
+export async function sendColdEmail(p: ColdEmailParams): Promise<SentEmailResult> {
   const inboxId = await getOrCreateInbox();
-  if (!inboxId) return false;
+  if (!inboxId) {
+    return { ok: false, inboxId: null, error: "missing inbox id" };
+  }
 
   const budget = (p.budgetCents / 100).toFixed(0);
   const subject = `Quick quote request: ${p.service} in ${p.location}`;
@@ -54,15 +65,27 @@ export async function sendColdEmail(p: ColdEmailParams): Promise<boolean> {
     `<p>Thanks,<br/>${p.fromName ?? "Haggle Concierge"}</p>`;
 
   try {
-    await client().inboxes.messages.send(inboxId, {
+    const sent = await client().inboxes.messages.send(inboxId, {
       to: [p.to],
       subject,
       text,
       html,
     } as unknown as Record<string, never>);
-    return true;
+    const response = sent as unknown as { messageId?: string; threadId?: string };
+    return {
+      ok: true,
+      inboxId,
+      messageId: response.messageId,
+      threadId: response.threadId,
+      subject,
+    };
   } catch (e) {
     console.error("[agentmail] send failed", e);
-    return false;
+    return {
+      ok: false,
+      inboxId,
+      subject,
+      error: e instanceof Error ? e.message : String(e),
+    };
   }
 }

@@ -69,10 +69,31 @@ CREATE TABLE IF NOT EXISTS messages (
   created_at INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS email_threads (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  job_id INTEGER NOT NULL REFERENCES jobs(id),
+  lead_id INTEGER NOT NULL REFERENCES leads(id),
+  inbox_id TEXT,
+  thread_id TEXT,
+  outbound_message_id TEXT,
+  last_inbound_message_id TEXT,
+  provider_email TEXT,
+  provider_name TEXT,
+  subject TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  last_outbound_at INTEGER NOT NULL,
+  last_inbound_at INTEGER
+);
+
 CREATE INDEX IF NOT EXISTS idx_jobs_conversation ON jobs(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_leads_job ON leads(job_id);
 CREATE INDEX IF NOT EXISTS idx_calls_lead ON calls(lead_id);
 CREATE INDEX IF NOT EXISTS idx_messages_job ON messages(job_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_email_threads_outbound_message ON email_threads(outbound_message_id);
+CREATE INDEX IF NOT EXISTS idx_email_threads_thread ON email_threads(thread_id);
+CREATE INDEX IF NOT EXISTS idx_email_threads_job_lead ON email_threads(job_id, lead_id);
+CREATE INDEX IF NOT EXISTS idx_email_threads_provider_email ON email_threads(provider_email);
 `;
 
 export function db(): Client {

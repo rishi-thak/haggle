@@ -4,9 +4,10 @@ import { scrapeLeads } from "./browseruse";
 import { parseIntent } from "./intent";
 import { payUsdc } from "./sponge";
 import { addMemory, recallProviderHistory, searchMemories } from "./supermemory";
-import { summarizeCall } from "./negotiator";
+import { getNegotiationStatusSnapshot, summarizeCall } from "./negotiator";
 import {
   createJob,
+  findEmailLeadMatch,
   findActiveJobByConversation,
   getJob,
   getLead,
@@ -15,16 +16,24 @@ import {
   insertLead,
   listLeads,
   logMessage,
+  markInboundEmailReceived,
+  markJobAwaitingConfirmIfOpen,
+  markJobFailedIfUnresolved,
   recordCallEnd,
   recordCallStart,
+  upsertEmailThread,
   updateJob,
   updateLead,
 } from "./repo";
-import type { Job, Lead, NegotiationContext } from "./types";
+import type { Job, Lead, NegotiationContext, NegotiationOutcome } from "./types";
 import { env } from "./env";
 
 const MAX_LEADS = 8;
 const MAX_PARALLEL_CALLS = 4;
+const TERMINAL_JOB_STATUSES = new Set<Job["status"]>(["complete", "failed"]);
+const RESOLUTION_LOCKED_JOB_STATUSES = new Set<Job["status"]>(["awaiting_confirm", "paying", "complete", "failed"]);
+const ACTIVE_LEAD_STATUSES = new Set<Lead["status"]>(["pending", "calling", "negotiating", "emailed"]);
+const FOLLOW_UP_LEAD_STATUSES = new Set<Lead["status"]>(["callback", "ambiguous"]);
 
 async function notify(job: Job, text: string): Promise<void> {
   const user = await getUserByConversation(job.conversation_id);
@@ -49,6 +58,155 @@ function rankLead(l: {
   return s;
 }
 
+function isTerminalJobStatus(status: Job["status"]): boolean {
+  return TERMINAL_JOB_STATUSES.has(status);
+}
+
+function isResolutionLockedJobStatus(status: Job["status"]): boolean {
+  return RESOLUTION_LOCKED_JOB_STATUSES.has(status);
+}
+
+async function sendFallbackEmailForLead(args: {
+  job: Job;
+  lead: Lead;
+  budgetCents: number;
+  timeframe: string;
+}): Promise<boolean> {
+  if (!args.lead.email) return false;
+  const sent = await sendColdEmail({
+    to: args.lead.email,
+    businessName: args.lead.name,
+    service: args.job.service ?? "",
+    location: args.job.location ?? "",
+    budgetCents: args.budgetCents,
+    timeframe: args.timeframe,
+    fromName: "Haggle Concierge",
+  });
+  if (!sent.ok) return false;
+  await upsertEmailThread({
+    jobId: args.job.id,
+    leadId: args.lead.id,
+    inboxId: sent.inboxId,
+    threadId: sent.threadId ?? null,
+    outboundMessageId: sent.messageId ?? null,
+    providerEmail: args.lead.email,
+    providerName: args.lead.name,
+    subject: sent.subject ?? null,
+  });
+  return true;
+}
+
+function parseQuotedPriceCents(text: string): number | null {
+  const matches = Array.from(text.matchAll(/\$\s*(\d{2,5})(?:\.\d{2})?/g));
+  const latest = matches.at(-1)?.[1];
+  return latest ? Number(latest) * 100 : null;
+}
+
+function inferEmailOutcome(text: string, budgetCents: number): {
+  outcome: NegotiationOutcome;
+  quotedPriceCents: number | null;
+  summary: string;
+} {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  const lower = normalized.toLowerCase();
+  const quotedPriceCents = parseQuotedPriceCents(normalized);
+  const agreed =
+    quotedPriceCents !== null &&
+    quotedPriceCents <= budgetCents &&
+    /\b(available|can do|we can|we have availability|works for us|yes)\b/i.test(normalized);
+  const callback = /\b(call|reach)\b.*\b(back|later)\b|\bcallback\b|\bgive us a call\b/i.test(normalized);
+  const declined =
+    /\b(can't|cannot|won't|not available|too busy|booked|decline|pass)\b/i.test(normalized) ||
+    (quotedPriceCents !== null && quotedPriceCents > budgetCents);
+  const ambiguous =
+    /\b(maybe|depends|not sure|can discuss|what's the address|what date|need details)\b/i.test(normalized) ||
+    (quotedPriceCents !== null && !agreed && !declined);
+
+  if (agreed) {
+    return {
+      outcome: "agreed",
+      quotedPriceCents,
+      summary: `Email reply quoted $${((quotedPriceCents ?? 0) / 100).toFixed(0)} and said they can do it.`,
+    };
+  }
+  if (callback) {
+    return {
+      outcome: "callback",
+      quotedPriceCents,
+      summary: "Provider replied by email and asked for a callback or further follow-up.",
+    };
+  }
+  if (declined) {
+    const priceNote = quotedPriceCents ? ` at $${(quotedPriceCents / 100).toFixed(0)}` : "";
+    return {
+      outcome: "declined",
+      quotedPriceCents,
+      summary: `Provider declined or stayed above budget${priceNote}.`,
+    };
+  }
+  if (ambiguous || lower.length > 0) {
+    return {
+      outcome: "ambiguous",
+      quotedPriceCents,
+      summary: "Provider replied by email, but the quote or availability was not firm enough to book yet.",
+    };
+  }
+  return {
+    outcome: "no_answer",
+    quotedPriceCents: null,
+    summary: "Email reply did not contain usable quote details.",
+  };
+}
+
+async function resolveJobAfterLeadUpdate(jobId: number): Promise<void> {
+  const job = await getJob(jobId);
+  if (!job || isResolutionLockedJobStatus(job.status)) return;
+
+  const user = await getUserByConversation(job.conversation_id);
+  const leads = await listLeads(job.id);
+  const winner = leads
+    .filter((l) => l.status === "agreed" && l.quoted_price_cents !== null)
+    .sort((a, b) => (a.quoted_price_cents ?? 0) - (b.quoted_price_cents ?? 0))[0];
+
+  if (winner) {
+    const claimed = await markJobAwaitingConfirmIfOpen(job.id, winner.id);
+    if (!claimed) return;
+    const winText =
+      `✅ Best offer: ${winner.name} — $${((winner.quoted_price_cents ?? 0) / 100).toFixed(0)} for ${job.service}.\n` +
+      `Reply "pay them" to book and send payment, or "no" to keep waiting.`;
+    await sendIMessage(job.conversation_id, winText, user?.phone);
+    await logMessage({
+      jobId: job.id,
+      direction: "outbound",
+      channel: "imessage",
+      body: winText,
+    });
+    return;
+  }
+
+  const hasActiveLeads = leads.some((l) => ACTIVE_LEAD_STATUSES.has(l.status));
+  const hasFollowUpLeads = leads.some((l) => FOLLOW_UP_LEAD_STATUSES.has(l.status));
+  if (hasActiveLeads) return;
+
+  if (hasFollowUpLeads) {
+    if (job.status !== "awaiting_callback") {
+      await updateJob(job.id, { status: "awaiting_callback" });
+      const text =
+        "A provider replied, but they still need follow-up before a firm booking. I'll keep tracking responses and text you when there's a concrete offer.";
+      await sendIMessage(job.conversation_id, text, user?.phone);
+      await logMessage({ jobId: job.id, direction: "outbound", channel: "imessage", body: text });
+    }
+    return;
+  }
+
+  const failed = await markJobFailedIfUnresolved(job.id);
+  if (!failed) return;
+  const failText =
+    `No one agreed at $${((job.budget_cents ?? 0) / 100).toFixed(0)}. Want to raise budget or try a different city?`;
+  await sendIMessage(job.conversation_id, failText, user?.phone);
+  await logMessage({ jobId: job.id, direction: "outbound", channel: "imessage", body: failText });
+}
+
 export async function handleInboundIMessage(args: {
   conversationId: string;
   fromPhone: string;
@@ -63,7 +221,7 @@ export async function handleInboundIMessage(args: {
     return;
   }
 
-  if (existing && !["complete", "failed"].includes(existing.status)) {
+  if (existing && !isTerminalJobStatus(existing.status)) {
     await logMessage({ jobId: existing.id, direction: "inbound", channel: "imessage", body: text });
     await notify(
       existing,
@@ -182,14 +340,11 @@ async function runFullJob(jobId: number, containerTag: string): Promise<void> {
   if (emailOnly.length) {
     await updateJob(jobId, { status: "email_fallback" });
     for (const lead of emailOnly) {
-      const ok = await sendColdEmail({
-        to: lead.email!,
-        businessName: lead.name,
-        service: intent.service,
-        location: intent.location,
+      const ok = await sendFallbackEmailForLead({
+        job,
+        lead,
         budgetCents,
         timeframe: intent.timeframe,
-        fromName: "Haggle Concierge",
       });
       await updateLead(lead.id, { status: ok ? "emailed" : "no_answer" });
     }
@@ -224,6 +379,7 @@ export async function handleCallCompleted(args: {
   const lead = await getLead(ended.leadId);
   const job = await getJob(ended.jobId);
   if (!lead || !job) return;
+  if (isResolutionLockedJobStatus(job.status)) return;
 
   const user = await getUserByConversation(job.conversation_id);
   const containerTag = user?.container_tag ?? `user_unknown`;
@@ -242,8 +398,9 @@ export async function handleCallCompleted(args: {
   };
 
   const result = await summarizeCall(ctx, args.transcript);
+  const snapshot = getNegotiationStatusSnapshot(result.outcome);
   await updateLead(lead.id, {
-    status: result.outcome === "agreed" ? "agreed" : result.outcome === "no_answer" ? "no_answer" : "declined",
+    status: snapshot.leadStatus,
     quoted_price_cents: result.quotedPriceCents,
     notes: result.summary,
   });
@@ -253,50 +410,75 @@ export async function handleCallCompleted(args: {
     { type: "call_result", leadId: lead.id, jobId: job.id, outcome: result.outcome },
   );
 
+  const currentJob = await getJob(job.id);
+  if (!currentJob || isResolutionLockedJobStatus(currentJob.status)) return;
+
   // If no answer, send fallback email if we have one
   if (result.outcome === "no_answer" && lead.email) {
-    const ok = await sendColdEmail({
-      to: lead.email,
-      businessName: lead.name,
-      service: job.service ?? "",
-      location: job.location ?? "",
+    const ok = await sendFallbackEmailForLead({
+      job: currentJob,
+      lead,
       budgetCents: ctx.budgetCents,
       timeframe: ctx.timeframe,
-      fromName: "Haggle Concierge",
     });
     if (ok) await updateLead(lead.id, { status: "emailed" });
   }
 
-  // Check if all leads have settled
-  const leads = await listLeads(job.id);
-  const anyOpen = leads.some((l) => l.status === "calling" || l.status === "negotiating" || l.status === "pending");
-  const winner = leads
-    .filter((l) => l.status === "agreed" && l.quoted_price_cents !== null)
-    .sort((a, b) => (a.quoted_price_cents ?? 0) - (b.quoted_price_cents ?? 0))[0];
+  await resolveJobAfterLeadUpdate(currentJob.id);
+}
 
-  if (winner) {
-    await updateJob(job.id, { status: "awaiting_confirm", winning_lead_id: winner.id });
-    const winText =
-      `✅ Best offer: ${winner.name} — $${((winner.quoted_price_cents ?? 0) / 100).toFixed(0)} for ${job.service}.\n` +
-      `Reply "pay them" to book and send payment, or "no" to keep waiting.`;
-    await sendIMessage(job.conversation_id, winText, user?.phone);
-    await logMessage({
-      jobId: job.id,
-      direction: "outbound",
-      channel: "imessage",
-      body: winText,
-    });
-    return;
-  }
+export async function handleInboundEmailReply(args: {
+  inboxId?: string | null;
+  threadId?: string | null;
+  messageId: string;
+  inReplyTo?: string | null;
+  fromEmail?: string | null;
+  subject?: string | null;
+  text: string;
+}): Promise<void> {
+  const match = await findEmailLeadMatch({
+    inboxId: args.inboxId,
+    threadId: args.threadId,
+    inReplyTo: args.inReplyTo,
+    providerEmail: args.fromEmail,
+  });
+  if (!match || !match.emailThread) return;
 
-  if (!anyOpen) {
-    await updateJob(job.id, { status: "failed" });
-    await sendIMessage(
-      job.conversation_id,
-      `No one agreed at $${((job.budget_cents ?? 0) / 100).toFixed(0)}. Want to raise budget or try a different city?`,
-      user?.phone,
+  const recorded = await markInboundEmailReceived({
+    emailThreadId: match.emailThread.id,
+    messageId: args.messageId,
+    threadId: args.threadId,
+  });
+  if (!recorded) return;
+  if (isResolutionLockedJobStatus(match.job.status)) return;
+
+  const trimmedText = args.text.trim();
+  if (!trimmedText) return;
+
+  const result = inferEmailOutcome(trimmedText, match.job.budget_cents ?? 10000);
+  const snapshot = getNegotiationStatusSnapshot(result.outcome);
+  await updateLead(match.lead.id, {
+    status: snapshot.leadStatus,
+    quoted_price_cents: result.quotedPriceCents,
+    notes: result.summary,
+  });
+  await logMessage({
+    jobId: match.job.id,
+    direction: "inbound",
+    channel: "email",
+    body: trimmedText,
+  });
+
+  const user = await getUserByConversation(match.job.conversation_id);
+  if (user) {
+    await addMemory(
+      user.container_tag,
+      `Email reply from ${match.lead.name} for ${match.job.service}: ${result.summary}`,
+      { type: "email_result", leadId: match.lead.id, jobId: match.job.id, outcome: result.outcome },
     );
   }
+
+  await resolveJobAfterLeadUpdate(match.job.id);
 }
 
 async function runPayment(jobId: number): Promise<void> {
