@@ -360,3 +360,18 @@ export async function findCallByAgentphoneId(
   const call = row as JsonRecord;
   return { id: Number(call.id), leadId: Number(call.leadId), jobId: Number(call.jobId) };
 }
+
+export async function appendConversationMessage(
+  conversationId: string,
+  role: "user" | "assistant",
+  text: string,
+): Promise<void> {
+  await convexClient().mutation(api.repo.appendConversationMessage, { conversationId, role, text });
+}
+
+export async function getRecentMessages(
+  conversationId: string,
+): Promise<{ role: "user" | "assistant"; text: string }[]> {
+  const rows = await convexClient().query(api.repo.getRecentMessages, { conversationId });
+  return rows as { role: "user" | "assistant"; text: string }[];
+}

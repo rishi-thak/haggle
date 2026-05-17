@@ -82,3 +82,50 @@ export async function recallProviderHistory(
     : false;
   return { summary: text, usedBefore };
 }
+
+export async function getUserPreferences(
+  containerTag: string,
+  service: string,
+): Promise<MemoryResult[]> {
+  return searchMemories(containerTag, `${service} preferences personal notes`, 5);
+}
+
+export async function getProviderReputation(
+  containerTag: string,
+  providerName: string,
+): Promise<{ memories: MemoryResult[]; sentiment: "positive" | "negative" | "neutral" }> {
+  const results = await searchMemories(containerTag, `${providerName} experience outcome`, 5);
+  if (!results.length) return { memories: results, sentiment: "neutral" };
+
+  const text = results.map((r) => r.content.toLowerCase()).join(" ");
+  const positiveSignals = /\b(great|good|well|success|happy|loved|recommend|booked|paid)\b/;
+  const negativeSignals = /\b(bad|terrible|declined|refused|don't use|avoid|never again|rude|late|no-show)\b/;
+
+  const hasPositive = positiveSignals.test(text);
+  const hasNegative = negativeSignals.test(text);
+
+  let sentiment: "positive" | "negative" | "neutral" = "neutral";
+  if (hasNegative && !hasPositive) sentiment = "negative";
+  else if (hasPositive && !hasNegative) sentiment = "positive";
+
+  return { memories: results, sentiment };
+}
+
+export async function addProviderFeedback(
+  containerTag: string,
+  providerName: string,
+  service: string,
+  feedback: string,
+  sentiment: "positive" | "negative",
+): Promise<void> {
+  const content =
+    sentiment === "positive"
+      ? `Positive experience with ${providerName} for ${service}: ${feedback}`
+      : `Negative experience with ${providerName} for ${service}: ${feedback}`;
+  await addMemory(containerTag, content, {
+    type: "provider_feedback",
+    providerName,
+    service,
+    sentiment,
+  });
+}

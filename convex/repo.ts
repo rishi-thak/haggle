@@ -903,3 +903,89 @@ export const getCall = query({
     return call ? callRow(call) : null;
   },
 });
+
+// --- Conversation Messages ---
+
+export const appendConversationMessage = mutation({
+  args: {
+    conversationId: v.string(),
+    role: v.union(v.literal("user"), v.literal("assistant")),
+    text: v.string(),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.insert("conversation_messages", {
+      conversation_id: args.conversationId,
+      role: args.role,
+      text: args.text,
+      created_at: now(),
+    });
+    return null;
+  },
+});
+
+export const getRecentMessages = query({
+  args: { conversationId: v.string() },
+  handler: async (ctx, args) => {
+    const messages = await ctx.db
+      .query("conversation_messages")
+      .withIndex("by_conversation", (q) => q.eq("conversation_id", args.conversationId))
+      .order("desc")
+      .take(10);
+    return messages
+      .reverse()
+      .map((m) => ({ role: m.role, text: m.text }));
+  },
+});
+
+// --- Followups ---
+
+export const createFollowUp = mutation({
+  args: {
+    jobId: v.number(),
+    leadId: v.number(),
+    conversationId: v.string(),
+    providerName: v.string(),
+    service: v.string(),
+    scheduledAt: v.number(),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.insert("followups", {
+      job_id: args.jobId,
+      lead_id: args.leadId,
+      conversation_id: args.conversationId,
+      provider_name: args.providerName,
+      service: args.service,
+      scheduled_at: args.scheduledAt,
+      sent: false,
+    });
+    return null;
+  },
+});
+
+export const getPendingFollowUps = query({
+  args: { now: v.number() },
+  handler: async (ctx, args) => {
+    const results = await ctx.db
+      .query("followups")
+      .withIndex("by_pending", (q) => q.eq("sent", false).lte("scheduled_at", args.now))
+      .collect();
+    return results.map((r) => ({
+      _id: r._id,
+      job_id: r.job_id,
+      lead_id: r.lead_id,
+      conversation_id: r.conversation_id,
+      provider_name: r.provider_name,
+      service: r.service,
+      scheduled_at: r.scheduled_at,
+      sent: r.sent,
+    }));
+  },
+});
+
+export const markFollowUpSent = mutation({
+  args: { id: v.id("followups") },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.id, { sent: true });
+    return null;
+  },
+});

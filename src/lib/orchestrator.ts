@@ -9,16 +9,21 @@ import {
 } from "./browseruse";
 import { parseIntent } from "./intent";
 import { triageMessage } from "./triage";
+import { classifyJobControl } from "./jobControl";
+import { getJobStatusText } from "./jobStatus";
+import { scheduleFollowUp } from "./followup";
 import { payUsdc } from "./sponge";
-import { addMemory, recallProviderHistory, searchMemories } from "./supermemory";
+import { addMemory, addProviderFeedback, getProviderReputation, recallProviderHistory, searchMemories } from "./supermemory";
 import { getNegotiationStatusSnapshot, summarizeCall } from "./negotiator";
 import {
+  appendConversationMessage,
   createJob,
   findEmailLeadMatch,
   findActiveJobByConversation,
   getJob,
   getLead,
   getOrCreateUser,
+  getRecentMessages,
   getUserByConversation,
   insertLead,
   listLeads,
@@ -107,7 +112,35 @@ async function notify(job: Job, text: string): Promise<void> {
 }
 
 function isConfirmation(text: string): boolean {
-  return /\b(done|pay|pay them|book it|go ahead|yes|confirm|do it)\b/i.test(text);
+  return /\b(done|pay|pay them|book it|go ahead|yes|yeah|yep|yup|yea|confirm|do it|send it|let's go|for sure|go for it)\b/i.test(text);
+}
+
+function isSelectionReply(text: string): boolean {
+  const trimmed = text.trim();
+  if (/^[1-3]$/.test(trimmed)) return true;
+  if (isConfirmation(trimmed)) return true;
+  if (/\b(first|second|third)\b/i.test(trimmed)) return true;
+  return false;
+}
+
+function resolveSelectionIndex(text: string, agreedLeads: Lead[]): number | null {
+  const trimmed = text.trim();
+  if (/^[1-3]$/.test(trimmed)) {
+    const idx = parseInt(trimmed, 10) - 1;
+    return idx < agreedLeads.length ? idx : null;
+  }
+  if (/\bfirst\b/i.test(trimmed)) return 0;
+  if (/\bsecond\b/i.test(trimmed)) return agreedLeads.length > 1 ? 1 : null;
+  if (/\bthird\b/i.test(trimmed)) return agreedLeads.length > 2 ? 2 : null;
+  const lower = trimmed.toLowerCase();
+  for (let i = 0; i < agreedLeads.length; i++) {
+    const leadNameLower = agreedLeads[i].name.toLowerCase();
+    if (leadNameLower.includes(lower) || lower.includes(leadNameLower.split(" ")[0])) {
+      return i;
+    }
+  }
+  if (isConfirmation(trimmed)) return 0;
+  return null;
 }
 
 function rankLead(l: {
@@ -223,33 +256,61 @@ function inferEmailOutcome(text: string, budgetCents: number): {
   };
 }
 
+function getAgreedLeadsSorted(leads: Lead[]): Lead[] {
+  return leads
+    .filter((l) => l.status === "agreed" && l.quoted_price_cents !== null)
+    .sort((a, b) => (a.quoted_price_cents ?? 0) - (b.quoted_price_cents ?? 0));
+}
+
+function buildComparisonMessage(agreedLeads: Lead[]): string {
+  if (agreedLeads.length === 1) {
+    const lead = agreedLeads[0];
+    const price = ((lead.quoted_price_cents ?? 0) / 100).toFixed(0);
+    const rating = lead.rating ? ` (${lead.rating}★)` : "";
+    return `${lead.name.toLowerCase()}${rating}, $${price} — want me to book?`;
+  }
+  const lines = [`got ${agreedLeads.length} quotes back:`];
+  for (let i = 0; i < agreedLeads.length; i++) {
+    const lead = agreedLeads[i];
+    const price = ((lead.quoted_price_cents ?? 0) / 100).toFixed(0);
+    const rating = lead.rating ? ` (${lead.rating}★)` : "";
+    lines.push(`${i + 1}. ${lead.name.toLowerCase()}${rating} — $${price}`);
+  }
+  lines.push("reply with a number to book");
+  return lines.join("\n");
+}
+
 async function resolveJobAfterLeadUpdate(jobId: number): Promise<void> {
   const job = await getJob(jobId);
   if (!job || isResolutionLockedJobStatus(job.status)) return;
 
   const user = await getUserByConversation(job.conversation_id);
   const leads = await listLeads(job.id);
-  const winner = leads
-    .filter((l) => l.status === "agreed" && l.quoted_price_cents !== null)
-    .sort((a, b) => (a.quoted_price_cents ?? 0) - (b.quoted_price_cents ?? 0))[0];
+  const agreedLeads = getAgreedLeadsSorted(leads);
 
-  if (winner) {
-    const claimed = await markJobAwaitingConfirmIfOpen(job.id, winner.id);
+  const hasActiveLeads = leads.some((l) => ACTIVE_LEAD_STATUSES.has(l.status));
+  const hasFollowUpLeads = leads.some((l) => FOLLOW_UP_LEAD_STATUSES.has(l.status));
+  const allOthersTerminal = !hasActiveLeads && !hasFollowUpLeads;
+
+  // Present options when: 2+ agreed, OR 1 agreed and all others are done
+  if (agreedLeads.length >= 2 || (agreedLeads.length === 1 && allOthersTerminal)) {
+    const cheapest = agreedLeads[0];
+    const claimed = await markJobAwaitingConfirmIfOpen(job.id, cheapest.id);
     if (!claimed) return;
-    const price = ((winner.quoted_price_cents ?? 0) / 100).toFixed(0);
-    const winText = `${winner.name}, $${price} — want me to book and pay?`;
-    await sendIMessage(job.conversation_id, winText, user?.phone);
+    const text = buildComparisonMessage(agreedLeads);
+    await sendIMessage(job.conversation_id, text, user?.phone);
     await logMessage({
       jobId: job.id,
       direction: "outbound",
       channel: "imessage",
-      body: winText,
+      body: text,
     });
     return;
   }
 
-  const hasActiveLeads = leads.some((l) => ACTIVE_LEAD_STATUSES.has(l.status));
-  const hasFollowUpLeads = leads.some((l) => FOLLOW_UP_LEAD_STATUSES.has(l.status));
+  // If there are agreed leads but calls still in flight, wait
+  if (agreedLeads.length >= 1 && hasActiveLeads) return;
+
   if (hasActiveLeads) return;
 
   if (hasFollowUpLeads) {
@@ -269,6 +330,53 @@ async function resolveJobAfterLeadUpdate(jobId: number): Promise<void> {
   await logMessage({ jobId: job.id, direction: "outbound", channel: "imessage", body: failText });
 }
 
+/**
+ * Adjust lead rankings based on the user's past interactions stored in Supermemory.
+ */
+async function applyMemoryToLeads(
+  containerTag: string,
+  leads: Lead[],
+  _service: string,
+): Promise<Lead[]> {
+  const results = await Promise.allSettled(
+    leads.map((lead) => getProviderReputation(containerTag, lead.name)),
+  );
+
+  const filtered: Lead[] = [];
+  for (let i = 0; i < leads.length; i++) {
+    const lead = leads[i];
+    const result = results[i];
+    if (result.status !== "fulfilled") {
+      filtered.push(lead);
+      continue;
+    }
+    const { memories, sentiment } = result.value;
+
+    const allText = memories.map((m) => m.content.toLowerCase()).join(" ");
+    const isBlocklisted =
+      allText.includes("don't use") ||
+      allText.includes("do not use") ||
+      allText.includes("never again") ||
+      allText.includes("avoid " + lead.name.toLowerCase());
+
+    if (isBlocklisted) {
+      console.log(`[memory] Filtering out ${lead.name} — user blocklisted`);
+      continue;
+    }
+
+    if (sentiment === "positive") {
+      lead.rank_score = (lead.rank_score ?? 0) + 3;
+    } else if (sentiment === "negative") {
+      lead.rank_score = (lead.rank_score ?? 0) - 2;
+    }
+
+    filtered.push(lead);
+  }
+
+  filtered.sort((a, b) => (b.rank_score ?? 0) - (a.rank_score ?? 0));
+  return filtered;
+}
+
 export async function handleInboundIMessage(args: {
   conversationId: string;
   fromPhone: string;
@@ -277,30 +385,118 @@ export async function handleInboundIMessage(args: {
   const { conversationId, fromPhone, text } = args;
   const existing = await findActiveJobByConversation(conversationId);
 
-  if (existing && existing.status === "awaiting_confirm" && isConfirmation(text)) {
+  // Multi-quote selection when awaiting confirmation
+  if (existing && existing.status === "awaiting_confirm" && isSelectionReply(text)) {
     await logMessage({ jobId: existing.id, direction: "inbound", channel: "imessage", body: text });
-    await runPayment(existing.id);
+    const leads = await listLeads(existing.id);
+    const agreedLeads = getAgreedLeadsSorted(leads);
+    if (agreedLeads.length > 1) {
+      const selectedIdx = resolveSelectionIndex(text, agreedLeads);
+      if (selectedIdx !== null && selectedIdx < agreedLeads.length) {
+        const selected = agreedLeads[selectedIdx];
+        if (existing.winning_lead_id !== selected.id) {
+          await updateJob(existing.id, { winning_lead_id: selected.id });
+        }
+        await runPayment(existing.id, selected.id);
+      } else {
+        await notify(existing, "didn't catch that — reply with a number (1, 2, etc) to pick one");
+      }
+    } else {
+      await runPayment(existing.id);
+    }
     return;
   }
 
+  // Smart job control for active jobs
   if (existing && !isTerminalJobStatus(existing.status)) {
     await logMessage({ jobId: existing.id, direction: "inbound", channel: "imessage", body: text });
-    await notify(existing, "still on it — i'll text you the moment something changes");
+
+    const intent = await classifyJobControl(text);
+
+    switch (intent.type) {
+      case "confirm": {
+        if (existing.status === "awaiting_confirm") {
+          await runPayment(existing.id);
+        } else {
+          await notify(existing, "nothing to confirm yet — still working on finding options");
+        }
+        break;
+      }
+      case "status": {
+        const statusText = await getJobStatusText(existing);
+        await notify(existing, statusText);
+        break;
+      }
+      case "cancel": {
+        await updateJob(existing.id, { status: "failed" });
+        await notify(existing, "killed it — lmk if you want to try something else");
+        break;
+      }
+      case "modify": {
+        const patches: Partial<Pick<Job, "budget_cents" | "location" | "timeframe">> = {};
+        const changeParts: string[] = [];
+        if (intent.budgetCents) {
+          patches.budget_cents = intent.budgetCents;
+          changeParts.push(`bumped budget to $${(intent.budgetCents / 100).toFixed(0)}`);
+        }
+        if (intent.location) {
+          patches.location = intent.location;
+          changeParts.push(`switched area to ${intent.location}`);
+        }
+        if (intent.timeframe) {
+          patches.timeframe = intent.timeframe;
+          changeParts.push(`timeframe now ${intent.timeframe}`);
+        }
+        if (Object.keys(patches).length) {
+          await updateJob(existing.id, patches);
+          await notify(existing, `${changeParts.join(", ")} — i'll retry with the new params`);
+        } else {
+          await notify(existing, "not sure what to change — can you be more specific?");
+        }
+        break;
+      }
+      case "skip": {
+        const leads = await listLeads(existing.id);
+        const activeLeads = leads.filter((l) => ACTIVE_LEAD_STATUSES.has(l.status));
+        if (activeLeads.length) {
+          await Promise.all(activeLeads.map((l) => updateLead(l.id, { status: "declined" })));
+          await notify(existing, `skipped ${activeLeads.length} — looking for others`);
+          await resolveJobAfterLeadUpdate(existing.id);
+        } else {
+          await notify(existing, "no active leads to skip — everyone already responded or was tried");
+        }
+        break;
+      }
+      case "other": {
+        await notify(existing, intent.reply);
+        break;
+      }
+    }
     return;
   }
 
-  // Triage: is this casual chat or a real service request?
-  const triage = await triageMessage(text);
-
-  if (triage.type === "chat") {
-    const user = await getOrCreateUser(fromPhone);
-    await sendIMessage(conversationId, triage.reply, user.phone);
-    return;
-  }
-
-  // It's a service request — kick off the full pipeline.
+  // Fetch conversation history for context-aware triage
+  const history = await getRecentMessages(conversationId);
   const user = await getOrCreateUser(fromPhone);
-  const job = await createJob({ userId: user.id, conversationId, intentRaw: text });
+
+  // Triage: is this casual chat, partial intent, or a real service request?
+  const triage = await triageMessage(text, { history, containerTag: user.container_tag });
+
+  if (triage.type === "chat" || triage.type === "partial") {
+    await appendConversationMessage(conversationId, "user", text);
+    await sendIMessage(conversationId, triage.reply, user.phone);
+    await appendConversationMessage(conversationId, "assistant", triage.reply);
+    return;
+  }
+
+  // It's a service request — store message and kick off the full pipeline.
+  await appendConversationMessage(conversationId, "user", text);
+  const fullIntentParts = history
+    .filter((m) => m.role === "user")
+    .map((m) => m.text);
+  fullIntentParts.push(text);
+  const intentRaw = fullIntentParts.join(" | ");
+  const job = await createJob({ userId: user.id, conversationId, intentRaw });
   await logMessage({ jobId: job.id, direction: "inbound", channel: "imessage", body: text });
   if (job.watch_token) {
     const watchUrl = buildWatchUrl(job.watch_token, env.PUBLIC_BASE_URL);
@@ -355,11 +551,11 @@ async function runFullJob(jobId: number, containerTag: string): Promise<void> {
     return;
   }
 
-  // 3. Pull user prefs from memory (warms supermemory; used per-call in voice webhook).
+  // 3. Pull user prefs from memory
   await searchMemories(containerTag, `preferences for ${intent.service}`, 5);
 
   // 4. Persist + rank
-  const leads: Lead[] = [];
+  let leads: Lead[] = [];
   for (const s of scraped) {
     const lead = await insertLead({
       job_id: jobId,
@@ -378,6 +574,9 @@ async function runFullJob(jobId: number, containerTag: string): Promise<void> {
   }
   leads.sort((a, b) => (b.rank_score ?? 0) - (a.rank_score ?? 0));
 
+  // 4b. Apply memory-based ranking: boost/penalize/filter providers
+  leads = await applyMemoryToLeads(containerTag, leads, intent.service);
+
   await updateJob(jobId, { status: "ranked" });
   await notify(
     job,
@@ -387,8 +586,7 @@ async function runFullJob(jobId: number, containerTag: string): Promise<void> {
       .join(", ")}`,
   );
 
-  // 5. Enrich top N: per-lead browser-use task hits the provider's website
-  // (email + pricing) and a Reddit sentiment search.
+  // 5. Enrich top N
   const toEnrich = leads.slice(0, ENRICH_TOP_N);
   const enrichments = await Promise.allSettled(
     toEnrich.map((lead) =>
@@ -430,8 +628,6 @@ async function runFullJob(jobId: number, containerTag: string): Promise<void> {
 
   await Promise.all(
     calling.map(async (lead) => {
-      // Webhook voice mode: Agentphone routes per-turn webhooks to
-      // /api/webhooks/agentphone/voice where we drive the negotiation with Gemini.
       const greeting = `Hi, this is Haggle calling about ${intent.service}.`;
       await logMessage({
         jobId,
@@ -453,7 +649,7 @@ async function runFullJob(jobId: number, containerTag: string): Promise<void> {
     }),
   );
 
-  // 6. Fire fallback emails to phone-less leads immediately
+  // Fire fallback emails to phone-less leads
   if (emailOnly.length) {
     await updateJob(jobId, { status: "email_fallback" });
     for (const lead of emailOnly) {
@@ -468,10 +664,8 @@ async function runFullJob(jobId: number, containerTag: string): Promise<void> {
     await notify(job, `also emailed ${emailOnly.length} that didn't have a phone listed`);
   }
 
-  // Status update — calls are now in flight. Resolution happens in handleCallCompleted.
   await notify(job, `dialed ${calling.length} — i'll text you when they quote`);
 
-  // If we sent no calls AND no emails, fail out.
   if (!calling.length && !emailOnly.length) {
     await updateJob(jobId, { status: "failed" });
     await notify(job, "none of them had a phone or email — try a different area?");
@@ -514,8 +708,6 @@ export async function handleCallCompleted(args: {
 
   const result = await summarizeCall(ctx, args.transcript);
   const snapshot = getNegotiationStatusSnapshot(result.outcome);
-  // Preserve the pre-call enrichment notes; append the call summary so we don't
-  // lose Reddit/website context as part of recording the outcome.
   const combinedNotes = [lead.notes, result.summary].filter(Boolean).join(" · ");
   await updateLead(lead.id, {
     status: snapshot.leadStatus,
@@ -527,6 +719,25 @@ export async function handleCallCompleted(args: {
     `Called ${lead.name} for ${job.service}: ${result.summary}`,
     { type: "call_result", leadId: lead.id, jobId: job.id, outcome: result.outcome },
   );
+
+  // Store structured provider feedback
+  if (result.outcome === "agreed") {
+    await addProviderFeedback(
+      containerTag,
+      lead.name,
+      job.service ?? "service",
+      `Agreed to do ${job.service} for $${((result.quotedPriceCents ?? 0) / 100).toFixed(0)}.`,
+      "positive",
+    );
+  } else if (result.outcome === "declined") {
+    await addProviderFeedback(
+      containerTag,
+      lead.name,
+      job.service ?? "service",
+      `Declined or couldn't match budget for ${job.service}.`,
+      "negative",
+    );
+  }
 
   // Send follow-up email recapping the call
   if (lead.email) {
@@ -557,11 +768,6 @@ export async function handleCallCompleted(args: {
 
   const currentJob = await getJob(job.id);
   if (!currentJob || isResolutionLockedJobStatus(currentJob.status)) return;
-
-  // If no answer and no follow-up was sent (no email), try cold email as last resort
-  if (result.outcome === "no_answer" && !lead.email) {
-    // No email available — nothing more we can do for this lead
-  }
 
   await resolveJobAfterLeadUpdate(currentJob.id);
 }
@@ -620,12 +826,18 @@ export async function handleInboundEmailReply(args: {
   await resolveJobAfterLeadUpdate(match.job.id);
 }
 
-async function runPayment(jobId: number): Promise<void> {
+async function runPayment(jobId: number, leadIdOverride?: number): Promise<void> {
   const job = await getJob(jobId);
-  if (!job || !job.winning_lead_id) return;
-  const lead = await getLead(job.winning_lead_id);
+  if (!job) return;
+  const targetLeadId = leadIdOverride ?? job.winning_lead_id;
+  if (!targetLeadId) return;
+  const lead = await getLead(targetLeadId);
   if (!lead) return;
   const user = await getUserByConversation(job.conversation_id);
+
+  if (job.winning_lead_id !== targetLeadId) {
+    await updateJob(jobId, { winning_lead_id: targetLeadId });
+  }
 
   await updateJob(jobId, { status: "paying" });
   await sendIMessage(job.conversation_id, `paying ${lead.name} now`, user?.phone);
@@ -641,12 +853,21 @@ async function runPayment(jobId: number): Promise<void> {
       user?.phone,
     );
     if (user) {
+      const today = new Date().toISOString().split("T")[0];
       await addMemory(
         user.container_tag,
-        `Paid ${lead.name} $${amount.toFixed(0)} for ${job.service}. Provider used successfully.`,
-        { type: "payment", leadId: lead.id, jobId: job.id, txHash: result.txHash },
+        `Last booked ${job.service} from ${lead.name} on ${today} for $${amount.toFixed(0)}. Went well.`,
+        { type: "booking_complete", leadId: lead.id, jobId: job.id, txHash: result.txHash, date: today },
+      );
+      await addProviderFeedback(
+        user.container_tag,
+        lead.name,
+        job.service ?? "service",
+        `Booked and paid $${amount.toFixed(0)} on ${today}. Transaction completed successfully.`,
+        "positive",
       );
     }
+    await scheduleFollowUp(job, lead);
   } else {
     await updateJob(jobId, { status: "failed" });
     await sendIMessage(

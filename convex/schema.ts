@@ -116,6 +116,23 @@ export default defineSchema({
     .index("by_browser_session_id", ["browser_session_id"])
     .index("by_external_message_id", ["external_message_id"]),
 
+  conversation_messages: defineTable({
+    conversation_id: v.string(),
+    role: v.union(v.literal("user"), v.literal("assistant")),
+    text: v.string(),
+    created_at: v.number(),
+  }).index("by_conversation", ["conversation_id", "created_at"]),
+
+  followups: defineTable({
+    job_id: v.number(),
+    lead_id: v.number(),
+    conversation_id: v.string(),
+    provider_name: v.string(),
+    service: v.string(),
+    scheduled_at: v.number(),
+    sent: v.boolean(),
+  }).index("by_pending", ["sent", "scheduled_at"]),
+
   email_threads: defineTable({
     legacyId: v.number(),
     job_id: v.number(),
