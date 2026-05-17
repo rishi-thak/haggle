@@ -2,6 +2,18 @@
 .env.*
 !.env.example
 
+# Node / Next
+node_modules/
+.next/
+out/
+.vercel
+*.tsbuildinfo
+next-env.d.ts
+
+# DB
+*.db
+*.db-journal
+
 # macOS
 .DS_Store
 
