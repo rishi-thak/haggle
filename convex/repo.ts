@@ -90,6 +90,7 @@ type BrowserSessionDoc = {
   phase: string;
   browser_use_session_id: string | null;
   live_url: string | null;
+  share_url?: string | null;
   status: string;
   step_count: number;
   last_step_summary: string | null;
@@ -244,6 +245,7 @@ function browserSessionRow(doc: BrowserSessionDoc) {
     phase: doc.phase,
     browser_use_session_id: doc.browser_use_session_id,
     live_url: doc.live_url,
+    share_url: doc.share_url ?? null,
     status: doc.status,
     step_count: doc.step_count,
     last_step_summary: doc.last_step_summary,
@@ -567,6 +569,7 @@ export const createBrowserSession = mutation({
     phase: v.string(),
     browserUseSessionId: nullableString,
     liveUrl: nullableString,
+    shareUrl: v.optional(nullableString),
     status: v.string(),
     stepCount: v.number(),
     lastStepSummary: nullableString,
@@ -584,7 +587,7 @@ export const createBrowserSession = mutation({
       : null;
 
     if (existing) {
-      await ctx.db.patch(existing._id, {
+      const patch: Record<string, unknown> = {
         label: args.label,
         phase: args.phase,
         live_url: args.liveUrl,
@@ -593,12 +596,15 @@ export const createBrowserSession = mutation({
         last_step_summary: args.lastStepSummary,
         screenshot_url: args.screenshotUrl,
         updated_at: t,
-      });
+      };
+      if (args.shareUrl !== undefined) patch.share_url = args.shareUrl;
+      await ctx.db.patch(existing._id, patch);
       return browserSessionRow({
         ...existing,
         label: args.label,
         phase: args.phase,
         live_url: args.liveUrl,
+        share_url: args.shareUrl ?? existing.share_url ?? null,
         status: args.status,
         step_count: args.stepCount,
         last_step_summary: args.lastStepSummary,
@@ -614,6 +620,7 @@ export const createBrowserSession = mutation({
       phase: args.phase,
       browser_use_session_id: args.browserUseSessionId,
       live_url: args.liveUrl,
+      share_url: args.shareUrl ?? null,
       status: args.status,
       step_count: args.stepCount,
       last_step_summary: args.lastStepSummary,
@@ -632,6 +639,7 @@ export const updateBrowserSession = mutation({
     id: v.number(),
     patch: v.object({
       live_url: v.optional(nullableString),
+      share_url: v.optional(nullableString),
       status: v.optional(v.string()),
       step_count: v.optional(v.number()),
       last_step_summary: v.optional(nullableString),

@@ -670,9 +670,13 @@ function BrowserTile({
   onClick: () => void;
 }) {
   const live = sessionIsLive(session);
-  const liveUrl = session.live_url
-    ? withLivePreviewParams(session.live_url, { theme: "light" })
+  // share_url is the unauthenticated, embeddable URL. Fall back to live_url
+  // for backfill / when share-mint fails.
+  const embedSource = session.share_url ?? session.live_url;
+  const liveUrl = embedSource
+    ? withLivePreviewParams(embedSource, { theme: "light" })
     : null;
+  const openUrl = session.share_url ?? session.live_url;
 
   if (variant === "strip") {
     return (
@@ -736,6 +740,19 @@ function BrowserTile({
         <span className="shrink-0 font-mono text-[10px] uppercase tracking-[0.14em] text-ink-400 tabular-nums">
           step {session.step_count}
         </span>
+        {openUrl && (
+          <a
+            href={openUrl}
+            target="_blank"
+            rel="noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="shrink-0 rounded-md bg-ink-50 p-1.5 text-ink-500 transition hover:bg-haggle-500/10 hover:text-haggle-600"
+            aria-label="open in new tab"
+            title="open in new tab"
+          >
+            <NewTabIcon className="size-3.5" />
+          </a>
+        )}
         {!isHero && (
           <button
             type="button"
@@ -1188,6 +1205,20 @@ function EmptyLine({ text }: { text: string }) {
     <div className="rounded-md border border-dashed border-black/[0.08] px-3 py-4 text-[13px] text-ink-400 text-pretty">
       {text}
     </div>
+  );
+}
+
+function NewTabIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden="true">
+      <path
+        d="M9 3H13V7M13 3L7.5 8.5M11 9V12C11 12.5523 10.5523 13 10 13H4C3.44772 13 3 12.5523 3 12V6C3 5.44772 3.44772 5 4 5H7"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   );
 }
 

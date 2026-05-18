@@ -133,6 +133,7 @@ export interface BrowserSessionRow {
   phase: string;
   browser_use_session_id: string | null;
   live_url: string | null;
+  share_url: string | null;
   status: string;
   step_count: number;
   last_step_summary: string | null;

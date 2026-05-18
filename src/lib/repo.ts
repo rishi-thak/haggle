@@ -126,6 +126,7 @@ function rowToBrowserSession(r: JsonRecord): BrowserSessionRow {
     phase: String(r.phase),
     browser_use_session_id: r.browser_use_session_id ? String(r.browser_use_session_id) : null,
     live_url: r.live_url ? String(r.live_url) : null,
+    share_url: r.share_url ? String(r.share_url) : null,
     status: String(r.status),
     step_count: Number(r.step_count),
     last_step_summary: r.last_step_summary ? String(r.last_step_summary) : null,
@@ -296,6 +297,7 @@ export async function createBrowserSession(args: {
   phase: string;
   browserUseSessionId: string | null;
   liveUrl: string | null;
+  shareUrl?: string | null;
   status: string;
   stepCount: number;
   lastStepSummary: string | null;
@@ -307,7 +309,7 @@ export async function createBrowserSession(args: {
 
 export async function updateBrowserSession(
   id: number,
-  patch: Partial<Pick<BrowserSessionRow, "live_url" | "status" | "step_count" | "last_step_summary" | "screenshot_url" | "error">>,
+  patch: Partial<Pick<BrowserSessionRow, "live_url" | "share_url" | "status" | "step_count" | "last_step_summary" | "screenshot_url" | "error">>,
 ): Promise<void> {
   await convexClient().mutation(api.repo.updateBrowserSession, {
     id,

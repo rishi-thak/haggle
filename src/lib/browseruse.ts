@@ -11,6 +11,7 @@ const DEFAULT_BROWSER_USE_INTERVAL_MS = 2_000;
 export type BrowserUseObservedSession = {
   id: string;
   liveUrl: string | null;
+  shareUrl: string | null;
   status: string;
   stepCount: number;
   lastStepSummary: string | null;
@@ -45,15 +46,54 @@ async function notifyObserver(callback: () => Promise<void> | undefined): Promis
   }
 }
 
-function normalizeSession(session: SessionResponse): BrowserUseObservedSession {
+function normalizeSession(
+  session: SessionResponse,
+  shareUrl: string | null = null,
+): BrowserUseObservedSession {
   return {
     id: session.id,
     liveUrl: session.liveUrl ?? null,
+    shareUrl,
     status: session.status,
     stepCount: session.stepCount ?? 0,
     lastStepSummary: session.lastStepSummary ?? null,
     screenshotUrl: session.screenshotUrl ?? null,
   };
+}
+
+/**
+ * Mint an unauthenticated public-share URL for a session. `liveUrl` from the
+ * SDK is private — embedded iframes hit a login wall unless the viewer is
+ * signed into browser-use. This share URL is the documented embeddable form.
+ *
+ * The v3 SDK doesn't expose this endpoint, so we hit the v2 HTTP API directly.
+ * Returns null on any failure so the caller can fall back to liveUrl.
+ */
+async function createPublicShareUrl(sessionId: string): Promise<string | null> {
+  if (!env.BROWSER_USE_API_KEY) return null;
+  try {
+    const res = await fetch(
+      `https://api.browser-use.com/api/v2/sessions/${encodeURIComponent(sessionId)}/public-share`,
+      {
+        method: "POST",
+        headers: {
+          "X-Browser-Use-API-Key": env.BROWSER_USE_API_KEY,
+          "Content-Type": "application/json",
+        },
+      },
+    );
+    if (!res.ok) {
+      console.warn(
+        `[browseruse] public-share ${sessionId} → ${res.status} ${await res.text().catch(() => "")}`,
+      );
+      return null;
+    }
+    const body = (await res.json()) as { shareUrl?: string };
+    return body.shareUrl ?? null;
+  } catch (error) {
+    console.warn(`[browseruse] public-share ${sessionId} failed`, error);
+    return null;
+  }
 }
 
 function normalizeMessage(message: MessageResponse): BrowserUseObservedMessage {
@@ -93,7 +133,12 @@ async function runBrowserUseTask<T extends z4.ZodType>(args: {
       outputSchema: z4.toJSONSchema(args.schema),
     });
     sessionId = created.id;
-    await notifyObserver(() => args.observer?.onSessionStarted?.(normalizeSession(created)));
+    // Mint a public share URL once — liveUrl from the SDK is private and won't
+    // embed in an iframe for visitors who aren't signed into browser-use.
+    const shareUrl = await createPublicShareUrl(sessionId);
+    await notifyObserver(() =>
+      args.observer?.onSessionStarted?.(normalizeSession(created, shareUrl)),
+    );
 
     let cursor: string | null = null;
     const deadline = Date.now() + (args.timeoutMs ?? DEFAULT_BROWSER_USE_TIMEOUT_MS);
@@ -106,7 +151,9 @@ async function runBrowserUseTask<T extends z4.ZodType>(args: {
       }
 
       const current = await client.sessions.get(sessionId);
-      await notifyObserver(() => args.observer?.onSessionUpdated?.(normalizeSession(current)));
+      await notifyObserver(() =>
+        args.observer?.onSessionUpdated?.(normalizeSession(current, shareUrl)),
+      );
       if (TERMINAL_SESSION_STATUSES.has(current.status)) {
         return parseStructuredOutput(current.output, args.schema);
       }

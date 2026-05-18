@@ -110,6 +110,7 @@ export default defineSchema({
     phase: v.string(),
     browser_use_session_id: nullableString,
     live_url: nullableString,
+    share_url: v.optional(nullableString),
     status: v.string(),
     step_count: v.number(),
     last_step_summary: nullableString,

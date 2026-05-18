@@ -81,6 +81,7 @@ function createBrowserUseObserver(jobId: number, label: string, phase: string): 
     if (!browserSessionId) return;
     await updateBrowserSession(browserSessionId, {
       live_url: session.liveUrl,
+      share_url: session.shareUrl,
       status: session.status,
       step_count: session.stepCount,
       last_step_summary: session.lastStepSummary,
@@ -97,6 +98,7 @@ function createBrowserUseObserver(jobId: number, label: string, phase: string): 
         phase,
         browserUseSessionId: session.id,
         liveUrl: session.liveUrl,
+        shareUrl: session.shareUrl,
         status: session.status,
         stepCount: session.stepCount,
         lastStepSummary: session.lastStepSummary,
