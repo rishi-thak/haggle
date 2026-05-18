@@ -54,13 +54,13 @@ export function buildSystemPrompt(ctx: NegotiationContext): string {
     `# Edge cases\n` +
     `Wrong number: if they say "wrong number", "we don't do that", or "you have the wrong place", say "sorry about that, have a good one" and hang up immediately.\n` +
     `"Who is this?": say "hey, I'm calling on behalf of a customer looking for ${ctx.service}. Is this ${ctx.businessName}?" If they say no, apologize and hang up.\n` +
-    `Voicemail: if you hear a beep, "leave a message", "you've reached", "mailbox", "not available", "after the tone", or any recorded greeting, say nothing and hang up immediately. Do not leave a message.\n` +
+    `Voicemail: if it's clearly a voicemail (beep followed by silence, obvious recording), say nothing and hang up. Do not leave a message.\n` +
     `Hold: if they say "hold on", "one sec", "let me check", just say "sure" and wait silently.\n\n` +
     `# Hangup discipline\n` +
     `End the call as soon as ONE of these is true:\n` +
     `- You said your closing line ("thanks", "appreciate the time", "we'll be in touch").\n` +
     `- They said goodbye, hung up, or asked you to stop calling.\n` +
-    `- It is clearly a voicemail or auto-attendant (beep, recorded message, "leave a message").\n` +
+    `- It is clearly a voicemail (beep followed by silence).\n` +
     `- They said "wrong number" or confirmed this is not the business you're calling.\n` +
     `- The conversation has obviously concluded and you have nothing left to ask.\n` +
     `Do not linger. Do not repeat yourself. Do not ask "anything else?" forever. When done, you MUST signal end-of-call in your structured output.\n`
@@ -244,15 +244,6 @@ const GOODBYE_PATTERNS = [
   /\bwe don'?t do that\b/i,
 ];
 
-const VOICEMAIL_PATTERNS = [
-  /\bvoicemail\b/i,
-  /\bafter the (tone|beep)\b/i,
-  /\bat the tone\b/i,
-  /\bmailbox (is )?full\b/i,
-  /\bleave (a |your )?message after\b/i,
-  /\bnot available.{0,20}leave (a |your )?message\b/i,
-  /\byou'?ve reached.{0,40}(leave|record|not available|unavailable)\b/i,
-];
 
 // If the agent says one of these in its own outgoing turn, the call is done.
 // This is the deterministic backstop for when the LLM forgets to set shouldHangup.
@@ -271,12 +262,8 @@ export function detectAgentClosing(text: string): boolean {
   return AGENT_CLOSING_PATTERNS.some((p) => p.test(text));
 }
 
-export function detectVoicemail(text: string): boolean {
-  return VOICEMAIL_PATTERNS.some((p) => p.test(text));
-}
-
 export function detectLeadGoodbye(text: string): boolean {
-  return GOODBYE_PATTERNS.some((p) => p.test(text)) || detectVoicemail(text);
+  return GOODBYE_PATTERNS.some((p) => p.test(text));
 }
 
 /**
