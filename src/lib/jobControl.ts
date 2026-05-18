@@ -46,7 +46,7 @@ export async function classifyJobControl(text: string): Promise<JobControlIntent
 
   // LLM classification for ambiguous messages
   if (!process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
-    return { type: "other", reply: "still working on it — hang tight" };
+    return { type: "other", reply: "" };
   }
 
   try {
@@ -74,11 +74,11 @@ export async function classifyJobControl(text: string): Promise<JobControlIntent
       };
     }
     if (object.type === "other") {
-      return { type: "other", reply: object.reply ?? "still working on it — hang tight" };
+      return { type: "other", reply: "" };
     }
     return { type: object.type };
   } catch (e) {
     console.error("[jobControl] gemini failed, falling back", e);
-    return { type: "other", reply: "still working on it — hang tight" };
+    return { type: "other", reply: "" };
   }
 }

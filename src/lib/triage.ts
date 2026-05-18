@@ -154,7 +154,7 @@ export async function triageMessage(
       model: gemini()(GEMINI_FAST),
       system: replySystemPrompt,
       messages,
-      maxOutputTokens: 100,
+      maxOutputTokens: 200,
     });
 
     return { type: object.type, reply: reply.trim() };

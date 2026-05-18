@@ -882,7 +882,7 @@ async function runIntentAndResearch(jobId: number, containerTag: string): Promis
 
   await notify(job0, "on it — thinking through what i need to ask first");
 
-  const intent = await parseIntent(job0.intent_raw);
+  const intent = await parseIntent(job0.intent_raw, containerTag);
   const budgetCents = intent.budgetCents ?? 10000;
   await applyParsedIntent(jobId, intent);
   await addMemory(
@@ -936,7 +936,7 @@ async function runLeadSearchAndApproval(jobId: number, containerTag: string): Pr
   if (!job0) return;
 
   // Re-parse — intent_raw now includes the user's clarifying answers.
-  const intent = await parseIntent(job0.intent_raw);
+  const intent = await parseIntent(job0.intent_raw, containerTag);
   await applyParsedIntent(jobId, intent);
   await updateJob(jobId, { status: "searching" });
   await searchMemories(containerTag, `preferences for ${intent.service}`, 5);

@@ -51,11 +51,17 @@ export function buildSystemPrompt(ctx: NegotiationContext): string {
     `Wrap: once payment method is captured, say "perfect, I'll confirm with the customer and we'll be in touch shortly to lock it in. thanks ${ctx.businessName.split(" ")[0] ?? ""}.". Then end the call. Do NOT promise to text or call back at a specific time. Do NOT say "I'll text" if you cannot actually text on this call.\n` +
     `Decline path: if they hold firm above budget after one counter, say "no worries, appreciate the time", end the call.\n` +
     `Voicemail / no human: if it's clearly a voicemail or auto-attendant, say nothing useful, end the call.\n\n` +
+    `# Edge cases\n` +
+    `Wrong number: if they say "wrong number", "we don't do that", or "you have the wrong place", say "sorry about that, have a good one" and hang up immediately.\n` +
+    `"Who is this?": say "hey, I'm calling on behalf of a customer looking for ${ctx.service}. Is this ${ctx.businessName}?" If they say no, apologize and hang up.\n` +
+    `Voicemail: if you hear a beep, "leave a message", "you've reached", "mailbox", "not available", "after the tone", or any recorded greeting, say nothing and hang up immediately. Do not leave a message.\n` +
+    `Hold: if they say "hold on", "one sec", "let me check", just say "sure" and wait silently.\n\n` +
     `# Hangup discipline\n` +
     `End the call as soon as ONE of these is true:\n` +
     `- You said your closing line ("thanks", "appreciate the time", "we'll be in touch").\n` +
     `- They said goodbye, hung up, or asked you to stop calling.\n` +
-    `- It is clearly a voicemail or no human is on the line.\n` +
+    `- It is clearly a voicemail or auto-attendant (beep, recorded message, "leave a message").\n` +
+    `- They said "wrong number" or confirmed this is not the business you're calling.\n` +
     `- The conversation has obviously concluded and you have nothing left to ask.\n` +
     `Do not linger. Do not repeat yourself. Do not ask "anything else?" forever. When done, you MUST signal end-of-call in your structured output.\n`
   );
@@ -233,6 +239,21 @@ const GOODBYE_PATTERNS = [
   /\bnot interested\b/i,
   /\bstop calling\b/i,
   /\bremove (me|us) from\b/i,
+  /\bwrong number\b/i,
+  /\byou have the wrong\b/i,
+  /\bwe don'?t do that\b/i,
+];
+
+const VOICEMAIL_PATTERNS = [
+  /\bvoicemail\b/i,
+  /\bleave (a |your )?message\b/i,
+  /\byou'?ve reached\b/i,
+  /\bmailbox\b/i,
+  /\bnot available\b/i,
+  /\bafter the (tone|beep)\b/i,
+  /\brecord (a |your )?message\b/i,
+  /\bplease (leave|record)\b/i,
+  /\bat the tone\b/i,
 ];
 
 // If the agent says one of these in its own outgoing turn, the call is done.
@@ -252,8 +273,12 @@ export function detectAgentClosing(text: string): boolean {
   return AGENT_CLOSING_PATTERNS.some((p) => p.test(text));
 }
 
+export function detectVoicemail(text: string): boolean {
+  return VOICEMAIL_PATTERNS.some((p) => p.test(text));
+}
+
 export function detectLeadGoodbye(text: string): boolean {
-  return GOODBYE_PATTERNS.some((p) => p.test(text));
+  return GOODBYE_PATTERNS.some((p) => p.test(text)) || detectVoicemail(text);
 }
 
 /**
