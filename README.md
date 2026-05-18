@@ -1,3 +1,4 @@
+
 # Haggle — local service concierge in iMessage
 
 You text "get my car detailed in SF for under $100" to a single number. Haggle
@@ -8,6 +9,7 @@ Agentmail, recalls past provider context from Supermemory, and once you reply
 
 <img width="3456" height="2168" alt="CleanShot 2026-05-17 at 20 28 31@2x" src="https://github.com/user-attachments/assets/e49fdc48-4928-46a4-a66c-5d45de196b0b" />
 <img width="3456" height="2168" alt="CleanShot 2026-05-17 at 20 28 17@2x" src="https://github.com/user-attachments/assets/70d68f30-d507-44d8-bef4-1e26f4156ac6" />
+<img width="3024" height="1964" alt="PNG image" src="https://github.com/user-attachments/assets/86f323e6-80ef-4935-934e-65f07175c604" />
 
 
 ## Architecture
