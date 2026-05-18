@@ -20,7 +20,7 @@ const JobControlSchema = z.object({
   budgetCents: z.number().int().nullable().describe("New budget in cents if the user specified one, else null."),
   location: z.string().nullable().describe("New location if the user specified one, else null."),
   timeframe: z.string().nullable().describe("New timeframe if the user specified one, else null."),
-  reply: z.string().nullable().describe("For type=other, a brief casual reply acknowledging the active job. Else null."),
+  reply: z.string().nullable().describe("For type=other, null. Do NOT generate a reply."),
 });
 
 const CANCEL_RE = /\b(cancel|stop|nevermind|never\s*mind|abort|forget\s*it|nvm)\b/i;
@@ -62,7 +62,7 @@ export async function classifyJobControl(text: string): Promise<JobControlIntent
         `- "skip" = they want to skip current leads and try others\n` +
         `- "confirm" = they are saying yes/approving (yes, do it, book it, pay, etc)\n` +
         `- "other" = anything else (chat, off-topic, unclear)\n\n` +
-        `If type is "other", write a brief casual reply (lowercase, friendly) that acknowledges their active job is running.`,
+        `If type is "other", set reply to null. Do not generate a reply.`,
     });
 
     if (object.type === "modify") {

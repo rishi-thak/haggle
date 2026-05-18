@@ -545,11 +545,11 @@ export async function handleInboundIMessage(args: {
         break;
       }
       case "other": {
-        await notify(existing, intent.reply);
+        // Fall through to triage for natural conversation
         break;
       }
     }
-    return;
+    if (intent.type !== "other") return;
   }
 
   // Fetch conversation history for context-aware triage
