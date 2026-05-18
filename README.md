@@ -6,6 +6,10 @@ voice (negotiation driven by Gemini), emails the ones without a phone via
 Agentmail, recalls past provider context from Supermemory, and once you reply
 "pay them" it sends USDC via Sponge. Every state change is texted back to you.
 
+<img width="3456" height="2168" alt="CleanShot 2026-05-17 at 20 28 31@2x" src="https://github.com/user-attachments/assets/e49fdc48-4928-46a4-a66c-5d45de196b0b" />
+<img width="3456" height="2168" alt="CleanShot 2026-05-17 at 20 28 17@2x" src="https://github.com/user-attachments/assets/70d68f30-d507-44d8-bef4-1e26f4156ac6" />
+
+
 ## Architecture
 
 - **Next.js 15 (App Router)** — frontend + serverless route handlers.
