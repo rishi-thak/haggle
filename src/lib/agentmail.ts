@@ -1,10 +1,12 @@
-import { AgentMailClient } from "agentmail";
 import { env } from "./env";
 
-let _client: AgentMailClient | null = null;
-function client(): AgentMailClient {
-  if (!_client) _client = new AgentMailClient({ apiKey: env.AGENTMAIL_API_KEY });
-  return _client;
+const BASE = "https://api.agentmail.to/v0";
+
+function headers(): HeadersInit {
+  return {
+    Authorization: `Bearer ${env.AGENTMAIL_API_KEY}`,
+    "Content-Type": "application/json",
+  };
 }
 
 let _inboxIdCache: string | null = env.AGENTMAIL_INBOX_ID || null;
@@ -13,17 +15,39 @@ export async function getOrCreateInbox(): Promise<string | null> {
   if (!env.AGENTMAIL_API_KEY) return null;
   if (_inboxIdCache) return _inboxIdCache;
   try {
-    const inbox = await client().inboxes.create({ clientId: "haggle-concierge-v1" } as unknown as undefined);
-    // The SDK types this loosely; the result has inboxId.
-    const id = (inbox as unknown as { inboxId?: string; id?: string }).inboxId
-      ?? (inbox as unknown as { inboxId?: string; id?: string }).id
-      ?? null;
+    const res = await fetch(`${BASE}/inboxes`, {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({}),
+    });
+    if (!res.ok) {
+      console.error("[agentmail] inbox create failed", res.status, await res.text());
+      return null;
+    }
+    const data = (await res.json()) as { inboxId?: string; id?: string };
+    const id = data.inboxId ?? data.id ?? null;
     _inboxIdCache = id;
     return id;
   } catch (e) {
     console.error("[agentmail] inbox create failed", e);
     return null;
   }
+}
+
+async function sendMessage(
+  inboxId: string,
+  params: { to: string[]; subject: string; text: string; html?: string },
+): Promise<{ messageId?: string; threadId?: string }> {
+  const res = await fetch(`${BASE}/inboxes/${inboxId}/messages/send`, {
+    method: "POST",
+    headers: headers(),
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`agentmail send failed: ${res.status} ${body}`);
+  }
+  return (await res.json()) as { messageId?: string; threadId?: string; message_id?: string; thread_id?: string };
 }
 
 export interface ColdEmailParams {
@@ -119,18 +143,12 @@ export async function sendFollowUpEmail(p: FollowUpEmailParams): Promise<SentEma
     .join("");
 
   try {
-    const sent = await client().inboxes.messages.send(inboxId, {
-      to: [p.to],
-      subject,
-      text,
-      html,
-    } as unknown as Record<string, never>);
-    const response = sent as unknown as { messageId?: string; threadId?: string };
+    const response = await sendMessage(inboxId, { to: [p.to], subject, text, html });
     return {
       ok: true,
       inboxId,
-      messageId: response.messageId,
-      threadId: response.threadId,
+      messageId: response.messageId ?? (response as Record<string, string>).message_id,
+      threadId: response.threadId ?? (response as Record<string, string>).thread_id,
       subject,
     };
   } catch (e) {
@@ -163,18 +181,12 @@ export async function sendColdEmail(p: ColdEmailParams): Promise<SentEmailResult
     `<p>Thanks,<br/>${p.fromName ?? "Haggle Concierge"}</p>`;
 
   try {
-    const sent = await client().inboxes.messages.send(inboxId, {
-      to: [p.to],
-      subject,
-      text,
-      html,
-    } as unknown as Record<string, never>);
-    const response = sent as unknown as { messageId?: string; threadId?: string };
+    const response = await sendMessage(inboxId, { to: [p.to], subject, text, html });
     return {
       ok: true,
       inboxId,
-      messageId: response.messageId,
-      threadId: response.threadId,
+      messageId: response.messageId ?? (response as Record<string, string>).message_id,
+      threadId: response.threadId ?? (response as Record<string, string>).thread_id,
       subject,
     };
   } catch (e) {
