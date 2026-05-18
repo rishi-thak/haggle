@@ -31,20 +31,24 @@ export function buildSystemPrompt(ctx: NegotiationContext): string {
     `2. Lead by asking for availability and a quote.\n` +
     `3. If their quote is over budget, counter once with the budget number and ask if they can match it.\n` +
     `4. If they hold firm, politely thank and end the call.\n` +
-    `5. If they accept, confirm the price, date/time, and address, then say "I'll text the customer to confirm and call you back to book."\n` +
-    `6. Never reveal you are an AI unless directly asked. If asked, be honest.\n`
+    `5. If they accept, confirm the price, date/time, and address.\n` +
+    `6. Before ending, ask: "One last thing — do you accept card payment, or would you prefer a direct bank transfer?"\n` +
+    `7. Then say "I'll text the customer to confirm and call you back to book."\n` +
+    `8. Never reveal you are an AI unless directly asked. If asked, be honest.\n`
   );
 }
 
 export interface NegotiationSummary {
   outcome: NegotiationOutcome;
   quotedPriceCents: number | null;
+  paymentMethod: "card" | "ach" | null;
   summary: string;
 }
 
 export const NegotiationOutcomeSchema = z.object({
   outcome: z.enum(NEGOTIATION_OUTCOME_VALUES),
   quotedPriceCents: z.number().int().nullable(),
+  paymentMethod: z.enum(["card", "ach"]).nullable().describe("Provider's preferred payment method: card or ach (bank transfer). null if not discussed."),
   summary: z.string().describe("1-2 sentence summary of the call result"),
 });
 
@@ -99,7 +103,7 @@ export async function summarizeCall(
   transcript: string,
 ): Promise<NegotiationSummary> {
   if (!transcript.trim()) {
-    return { outcome: "no_answer", quotedPriceCents: null, summary: "No answer" };
+    return { outcome: "no_answer", quotedPriceCents: null, paymentMethod: null, summary: "No answer" };
   }
   if (!process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
     return naiveSummarize(transcript, ctx);
@@ -110,11 +114,12 @@ export async function summarizeCall(
       prompt:
         `Negotiation transcript with ${ctx.businessName}. Target was $${(ctx.budgetCents / 100).toFixed(0)} for ${ctx.service}.\n\n` +
         `Transcript:\n${transcript}\n\n` +
-        `Return strict JSON with keys outcome, quotedPriceCents, and summary. ` +
+        `Return strict JSON with keys outcome, quotedPriceCents, paymentMethod, and summary. ` +
         `Outcome must be one of: ${NEGOTIATION_OUTCOME_VALUES.join(", ")}. ` +
         `quotedPriceCents must be an integer number of cents or null. ` +
+        `paymentMethod must be "card" or "ach" or null (if payment preference was not discussed). ` +
         `summary must be 1-2 sentences.`,
-      maxOutputTokens: 160,
+      maxOutputTokens: 200,
     });
     return NegotiationOutcomeSchema.parse(JSON.parse(text)) as NegotiationSummary;
   } catch (e) {
@@ -149,9 +154,18 @@ function naiveSummarize(transcript: string, ctx: NegotiationContext): Negotiatio
     outcome = "no_answer";
   }
 
+  const lower = normalized.toLowerCase();
+  let paymentMethod: "card" | "ach" | null = null;
+  if (/\b(card|credit card|debit card|visa|mastercard)\b/i.test(lower)) {
+    paymentMethod = "card";
+  } else if (/\b(bank transfer|ach|direct deposit|wire|bank account)\b/i.test(lower)) {
+    paymentMethod = "ach";
+  }
+
   return {
     outcome,
     quotedPriceCents: priceCents,
+    paymentMethod,
     summary: summarizeFallbackOutcome(outcome, priceCents),
   };
 }

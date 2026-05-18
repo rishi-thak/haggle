@@ -6,11 +6,14 @@ import type {
   CallRow,
   EmailLeadMatch,
   EmailThread,
+  EscrowPayment,
+  EscrowStatus,
   Job,
   JobStatus,
   Lead,
   LeadStatus,
   MessageRow,
+  PaymentMethod,
   User,
   WatchSnapshot,
 } from "./types";
@@ -65,8 +68,27 @@ function rowToLead(r: JsonRecord): Lead {
     rank_score: r.rank_score !== null ? Number(r.rank_score) : null,
     status: String(r.status) as LeadStatus,
     quoted_price_cents: r.quoted_price_cents !== null ? Number(r.quoted_price_cents) : null,
+    payment_method: (r.payment_method as PaymentMethod) ?? null,
     notes: r.notes ? String(r.notes) : null,
     created_at: Number(r.created_at),
+  };
+}
+
+function rowToEscrowPayment(r: JsonRecord): EscrowPayment {
+  return {
+    id: Number(r.id),
+    job_id: Number(r.job_id),
+    lead_id: Number(r.lead_id),
+    amount_cents: Number(r.amount_cents),
+    funding_source: String(r.funding_source) as "card" | "usdc",
+    funding_tx_hash: r.funding_tx_hash ? String(r.funding_tx_hash) : null,
+    provider_payout_method: (r.provider_payout_method as PaymentMethod) ?? null,
+    provider_payout_account_id: r.provider_payout_account_id ? String(r.provider_payout_account_id) : null,
+    release_tx_hash: r.release_tx_hash ? String(r.release_tx_hash) : null,
+    status: String(r.status) as EscrowStatus,
+    payout_token: String(r.payout_token),
+    created_at: Number(r.created_at),
+    updated_at: Number(r.updated_at),
   };
 }
 
@@ -206,7 +228,10 @@ export async function getJobByWatchToken(token: string): Promise<Job | null> {
 }
 
 export async function insertLead(args: Omit<Lead, "id" | "created_at">): Promise<Lead> {
-  const row = await convexClient().mutation(api.repo.insertLead, args);
+  const row = await convexClient().mutation(api.repo.insertLead, {
+    ...args,
+    payment_method: args.payment_method ?? null,
+  });
   return rowToLead(row as JsonRecord);
 }
 
@@ -374,4 +399,47 @@ export async function getRecentMessages(
 ): Promise<{ role: "user" | "assistant"; text: string }[]> {
   const rows = await convexClient().query(api.repo.getRecentMessages, { conversationId });
   return rows as { role: "user" | "assistant"; text: string }[];
+}
+
+export async function createEscrowPayment(args: {
+  jobId: number;
+  leadId: number;
+  amountCents: number;
+  fundingSource: "card" | "usdc";
+  fundingTxHash: string | null;
+  providerPayoutMethod: PaymentMethod;
+  payoutToken: string;
+}): Promise<EscrowPayment> {
+  const row = await convexClient().mutation(api.repo.createEscrowPayment, args);
+  return rowToEscrowPayment(row as JsonRecord);
+}
+
+export async function getEscrowByPayoutToken(payoutToken: string): Promise<{
+  escrow: EscrowPayment;
+  lead: Lead | null;
+  job: Job | null;
+} | null> {
+  const row = await convexClient().query(api.repo.getEscrowByPayoutToken, { payoutToken });
+  if (!row) return null;
+  const data = row as JsonRecord;
+  return {
+    escrow: rowToEscrowPayment(data.escrow as JsonRecord),
+    lead: data.lead ? rowToLead(data.lead as JsonRecord) : null,
+    job: data.job ? rowToJob(data.job as JsonRecord) : null,
+  };
+}
+
+export async function getEscrowByJobId(jobId: number): Promise<EscrowPayment | null> {
+  const row = await convexClient().query(api.repo.getEscrowByJobId, { jobId });
+  return row ? rowToEscrowPayment(row as JsonRecord) : null;
+}
+
+export async function updateEscrowPayment(
+  id: number,
+  patch: Partial<Pick<EscrowPayment, "status" | "provider_payout_account_id" | "provider_payout_method" | "release_tx_hash">>,
+): Promise<void> {
+  await convexClient().mutation(api.repo.updateEscrowPayment, {
+    id,
+    patch: compact(patch as JsonRecord),
+  });
 }

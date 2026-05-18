@@ -18,8 +18,11 @@ export type JobStatus =
   | "email_fallback"
   | "awaiting_confirm"
   | "paying"
+  | "awaiting_completion"
   | "complete"
   | "failed";
+
+export type PaymentMethod = "card" | "ach" | null;
 
 export type LeadStatus =
   | "pending"
@@ -74,8 +77,27 @@ export interface Lead {
   rank_score: number | null;
   status: LeadStatus;
   quoted_price_cents: number | null;
+  payment_method: PaymentMethod;
   notes: string | null;
   created_at: number;
+}
+
+export type EscrowStatus = "held" | "released" | "refunded";
+
+export interface EscrowPayment {
+  id: number;
+  job_id: number;
+  lead_id: number;
+  amount_cents: number;
+  funding_source: "card" | "usdc";
+  funding_tx_hash: string | null;
+  provider_payout_method: PaymentMethod;
+  provider_payout_account_id: string | null;
+  release_tx_hash: string | null;
+  status: EscrowStatus;
+  payout_token: string;
+  created_at: number;
+  updated_at: number;
 }
 
 export interface CallRow {

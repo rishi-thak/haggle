@@ -51,11 +51,31 @@ export default defineSchema({
     rank_score: nullableNumber,
     status: v.string(),
     quoted_price_cents: nullableNumber,
+    payment_method: nullableString,
     notes: nullableString,
     created_at: v.number(),
   })
     .index("by_legacyId", ["legacyId"])
     .index("by_job_id", ["job_id"]),
+
+  escrow_payments: defineTable({
+    legacyId: v.number(),
+    job_id: v.number(),
+    lead_id: v.number(),
+    amount_cents: v.number(),
+    funding_source: v.string(),
+    funding_tx_hash: nullableString,
+    provider_payout_method: nullableString,
+    provider_payout_account_id: nullableString,
+    release_tx_hash: nullableString,
+    status: v.string(),
+    payout_token: v.string(),
+    created_at: v.number(),
+    updated_at: v.number(),
+  })
+    .index("by_legacyId", ["legacyId"])
+    .index("by_job_id", ["job_id"])
+    .index("by_payout_token", ["payout_token"]),
 
   calls: defineTable({
     legacyId: v.number(),

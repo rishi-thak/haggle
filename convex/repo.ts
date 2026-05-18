@@ -40,8 +40,25 @@ type LeadDoc = {
   rank_score: number | null;
   status: string;
   quoted_price_cents: number | null;
+  payment_method: string | null;
   notes: string | null;
   created_at: number;
+};
+
+type EscrowPaymentDoc = {
+  legacyId: number;
+  job_id: number;
+  lead_id: number;
+  amount_cents: number;
+  funding_source: string;
+  funding_tx_hash: string | null;
+  provider_payout_method: string | null;
+  provider_payout_account_id: string | null;
+  release_tx_hash: string | null;
+  status: string;
+  payout_token: string;
+  created_at: number;
+  updated_at: number;
 };
 
 type CallDoc = {
@@ -168,8 +185,27 @@ function leadRow(doc: LeadDoc) {
     rank_score: doc.rank_score,
     status: doc.status,
     quoted_price_cents: doc.quoted_price_cents,
+    payment_method: doc.payment_method,
     notes: doc.notes,
     created_at: doc.created_at,
+  };
+}
+
+function escrowPaymentRow(doc: EscrowPaymentDoc) {
+  return {
+    id: doc.legacyId,
+    job_id: doc.job_id,
+    lead_id: doc.lead_id,
+    amount_cents: doc.amount_cents,
+    funding_source: doc.funding_source,
+    funding_tx_hash: doc.funding_tx_hash,
+    provider_payout_method: doc.provider_payout_method,
+    provider_payout_account_id: doc.provider_payout_account_id,
+    release_tx_hash: doc.release_tx_hash,
+    status: doc.status,
+    payout_token: doc.payout_token,
+    created_at: doc.created_at,
+    updated_at: doc.updated_at,
   };
 }
 
@@ -410,12 +446,14 @@ export const insertLead = mutation({
     rank_score: nullableNumber,
     status: v.string(),
     quoted_price_cents: nullableNumber,
+    payment_method: v.optional(nullableString),
     notes: nullableString,
   },
   handler: async (ctx, args) => {
     const doc = {
       legacyId: await nextLegacyId(ctx, "leads"),
       ...args,
+      payment_method: args.payment_method ?? null,
       created_at: now(),
     };
     await ctx.db.insert("leads", doc);
@@ -437,6 +475,7 @@ export const updateLead = mutation({
       rank_score: v.optional(nullableNumber),
       status: v.optional(v.string()),
       quoted_price_cents: v.optional(nullableNumber),
+      payment_method: v.optional(nullableString),
       notes: v.optional(nullableString),
     }),
   },
@@ -934,6 +973,90 @@ export const getRecentMessages = query({
     return messages
       .reverse()
       .map((m) => ({ role: m.role, text: m.text }));
+  },
+});
+
+// --- Escrow Payments ---
+
+export const createEscrowPayment = mutation({
+  args: {
+    jobId: v.number(),
+    leadId: v.number(),
+    amountCents: v.number(),
+    fundingSource: v.string(),
+    fundingTxHash: nullableString,
+    providerPayoutMethod: nullableString,
+    payoutToken: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const t = now();
+    const doc: EscrowPaymentDoc = {
+      legacyId: await nextLegacyId(ctx, "escrow_payments"),
+      job_id: args.jobId,
+      lead_id: args.leadId,
+      amount_cents: args.amountCents,
+      funding_source: args.fundingSource,
+      funding_tx_hash: args.fundingTxHash,
+      provider_payout_method: args.providerPayoutMethod,
+      provider_payout_account_id: null,
+      release_tx_hash: null,
+      status: "held",
+      payout_token: args.payoutToken,
+      created_at: t,
+      updated_at: t,
+    };
+    await ctx.db.insert("escrow_payments", doc);
+    return escrowPaymentRow(doc);
+  },
+});
+
+export const getEscrowByPayoutToken = query({
+  args: { payoutToken: v.string() },
+  handler: async (ctx, args) => {
+    const escrow = await ctx.db
+      .query("escrow_payments")
+      .withIndex("by_payout_token", (q) => q.eq("payout_token", args.payoutToken))
+      .unique();
+    if (!escrow) return null;
+    const lead = await getLeadDocByLegacyId(ctx, escrow.lead_id);
+    const job = await getJobDocByLegacyId(ctx, escrow.job_id);
+    return {
+      escrow: escrowPaymentRow(escrow),
+      lead: lead ? leadRow(lead) : null,
+      job: job ? jobRow(job) : null,
+    };
+  },
+});
+
+export const getEscrowByJobId = query({
+  args: { jobId: v.number() },
+  handler: async (ctx, args) => {
+    const escrow = await ctx.db
+      .query("escrow_payments")
+      .withIndex("by_job_id", (q) => q.eq("job_id", args.jobId))
+      .first();
+    return escrow ? escrowPaymentRow(escrow) : null;
+  },
+});
+
+export const updateEscrowPayment = mutation({
+  args: {
+    id: v.number(),
+    patch: v.object({
+      status: v.optional(v.string()),
+      provider_payout_account_id: v.optional(nullableString),
+      provider_payout_method: v.optional(nullableString),
+      release_tx_hash: v.optional(nullableString),
+    }),
+  },
+  handler: async (ctx, args) => {
+    const escrow = await ctx.db
+      .query("escrow_payments")
+      .withIndex("by_legacyId", (q) => q.eq("legacyId", args.id))
+      .unique();
+    if (!escrow) return null;
+    await ctx.db.patch(escrow._id, { ...args.patch, updated_at: now() });
+    return null;
   },
 });
 

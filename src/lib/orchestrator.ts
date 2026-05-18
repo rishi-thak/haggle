@@ -11,14 +11,22 @@ import { parseIntent } from "./intent";
 import { triageMessage } from "./triage";
 import { classifyJobControl } from "./jobControl";
 import { getJobStatusText } from "./jobStatus";
-import { payUsdc } from "./sponge";
+import {
+  lockEscrowFromCard,
+  lockEscrowFromUsdc,
+  releaseToBank,
+  releaseToVirtualCard,
+  refundEscrow,
+} from "./sponge";
 import { addMemory, addProviderFeedback, getProviderReputation, recallProviderHistory, searchMemories } from "./supermemory";
 import { getNegotiationStatusSnapshot, summarizeCall } from "./negotiator";
 import {
   appendConversationMessage,
+  createEscrowPayment,
   createJob,
   findEmailLeadMatch,
   findActiveJobByConversation,
+  getEscrowByJobId,
   getJob,
   getLead,
   getOrCreateUser,
@@ -34,6 +42,7 @@ import {
   recordBrowserEvent,
   recordCallEnd,
   recordCallStart,
+  updateEscrowPayment,
   upsertEmailThread,
   updateBrowserSession,
   updateJob,
@@ -42,12 +51,13 @@ import {
 import type { Job, Lead, NegotiationContext, NegotiationOutcome } from "./types";
 import { env } from "./env";
 import { buildWatchUrl } from "./watch";
+import { createPayoutToken, buildPayoutUrl } from "./payoutToken";
 
 const MAX_LEADS = 8;
 const MAX_PARALLEL_CALLS = 4;
 const ENRICH_TOP_N = 3;
 const TERMINAL_JOB_STATUSES = new Set<Job["status"]>(["complete", "failed"]);
-const RESOLUTION_LOCKED_JOB_STATUSES = new Set<Job["status"]>(["awaiting_confirm", "paying", "complete", "failed"]);
+const RESOLUTION_LOCKED_JOB_STATUSES = new Set<Job["status"]>(["awaiting_confirm", "paying", "awaiting_completion", "complete", "failed"]);
 const ACTIVE_LEAD_STATUSES = new Set<Lead["status"]>(["pending", "calling", "negotiating", "emailed"]);
 const FOLLOW_UP_LEAD_STATUSES = new Set<Lead["status"]>(["callback", "ambiguous"]);
 
@@ -266,14 +276,16 @@ function buildComparisonMessage(agreedLeads: Lead[]): string {
     const lead = agreedLeads[0];
     const price = ((lead.quoted_price_cents ?? 0) / 100).toFixed(0);
     const rating = lead.rating ? ` (${lead.rating}★)` : "";
-    return `${lead.name.toLowerCase()}${rating}, $${price} — want me to book?`;
+    const payHint = lead.payment_method === "card" ? ", accepts card" : lead.payment_method === "ach" ? ", wants bank transfer" : "";
+    return `${lead.name.toLowerCase()}${rating}, $${price}${payHint} — want me to book?`;
   }
   const lines = [`got ${agreedLeads.length} quotes back:`];
   for (let i = 0; i < agreedLeads.length; i++) {
     const lead = agreedLeads[i];
     const price = ((lead.quoted_price_cents ?? 0) / 100).toFixed(0);
     const rating = lead.rating ? ` (${lead.rating}★)` : "";
-    lines.push(`${i + 1}. ${lead.name.toLowerCase()}${rating} — $${price}`);
+    const payHint = lead.payment_method === "card" ? ", accepts card" : lead.payment_method === "ach" ? ", bank transfer" : "";
+    lines.push(`${i + 1}. ${lead.name.toLowerCase()}${rating} — $${price}${payHint}`);
   }
   lines.push("reply with a number to book");
   return lines.join("\n");
@@ -383,6 +395,41 @@ export async function handleInboundIMessage(args: {
 }): Promise<void> {
   const { conversationId, fromPhone, text } = args;
   const existing = await findActiveJobByConversation(conversationId);
+
+  // Handle payment funding source selection (card / usdc)
+  if (existing && existing.status === "paying") {
+    await logMessage({ jobId: existing.id, direction: "inbound", channel: "imessage", body: text });
+    const lower = text.trim().toLowerCase();
+    if (lower.includes("card") || lower.includes("credit")) {
+      await fundEscrow(existing.id, "card");
+    } else if (lower.includes("usdc") || lower.includes("crypto") || lower.includes("wallet")) {
+      await fundEscrow(existing.id, "usdc");
+    } else {
+      await notify(existing, "just reply 'card' or 'usdc' — which one?");
+    }
+    return;
+  }
+
+  // Handle job completion confirmation or no-show report
+  if (existing && existing.status === "awaiting_completion") {
+    await logMessage({ jobId: existing.id, direction: "inbound", channel: "imessage", body: text });
+    const lower = text.trim().toLowerCase();
+    const isDone = /\b(done|finished|completed|great|good|perfect|all set)\b/.test(lower);
+    const isNoShow = /\b(no.?show|didn't show|never showed|didn't come|ghosted)\b/.test(lower);
+    const isStatus = /\b(status|update|what's happening)\b/.test(lower);
+    if (isDone) {
+      await releasePayment(existing.id);
+    } else if (isNoShow) {
+      await refundPayment(existing.id);
+    } else if (isStatus) {
+      const lead = existing.winning_lead_id ? await getLead(existing.winning_lead_id) : null;
+      const name = lead?.name.toLowerCase() ?? "provider";
+      await notify(existing, `${name} is booked — payment's in escrow. text me 'done' when the job's finished and i'll release it`);
+    } else {
+      await notify(existing, "is the job done? just say 'done' to release payment, or 'no-show' if they ghosted");
+    }
+    return;
+  }
 
   // Multi-quote selection when awaiting confirmation
   if (existing && existing.status === "awaiting_confirm" && isSelectionReply(text)) {
@@ -567,6 +614,7 @@ async function runFullJob(jobId: number, containerTag: string): Promise<void> {
       rank_score: rankLead(s),
       status: "pending",
       quoted_price_cents: null,
+      payment_method: null,
       notes: null,
     });
     leads.push(lead);
@@ -711,6 +759,7 @@ export async function handleCallCompleted(args: {
   await updateLead(lead.id, {
     status: snapshot.leadStatus,
     quoted_price_cents: result.quotedPriceCents,
+    payment_method: result.paymentMethod,
     notes: combinedNotes,
   });
   await addMemory(
@@ -839,39 +888,177 @@ async function runPayment(jobId: number, leadIdOverride?: number): Promise<void>
   }
 
   await updateJob(jobId, { status: "paying" });
-  await sendIMessage(job.conversation_id, `paying ${lead.name} now`, user?.phone);
-
   const amount = (lead.quoted_price_cents ?? 0) / 100;
-  const result = await payUsdc(amount, env.SPONGE_DEMO_PAYEE_ADDRESS);
-  if (result.ok) {
+
+  // Ask user how they want to fund the escrow
+  await sendIMessage(
+    job.conversation_id,
+    `locking in ${lead.name.toLowerCase()} @ $${amount.toFixed(0)}. how do you wanna pay?\n• card (charge your card)\n• usdc (from your wallet)`,
+    user?.phone,
+  );
+  await logMessage({ jobId: job.id, direction: "outbound", channel: "imessage", body: `Payment method prompt for $${amount.toFixed(0)}` });
+
+  // For now, default to USDC (the user's next message with "card" or "usdc" will be handled by fundEscrow)
+  // Store escrow intent so fundEscrow can pick it up
+  const payoutToken = createPayoutToken();
+  await createEscrowPayment({
+    jobId: job.id,
+    leadId: lead.id,
+    amountCents: lead.quoted_price_cents ?? 0,
+    fundingSource: "usdc",
+    fundingTxHash: null,
+    providerPayoutMethod: lead.payment_method,
+    payoutToken,
+  });
+}
+
+export async function fundEscrow(jobId: number, fundingSource: "card" | "usdc"): Promise<void> {
+  const job = await getJob(jobId);
+  if (!job) return;
+  const escrow = await getEscrowByJobId(jobId);
+  if (!escrow) return;
+  const lead = await getLead(escrow.lead_id);
+  if (!lead) return;
+  const user = await getUserByConversation(job.conversation_id);
+  const amount = escrow.amount_cents / 100;
+
+  if (fundingSource === "card") {
+    const redirectUrl = `${env.PUBLIC_BASE_URL}/pay/${escrow.payout_token}`;
+    const result = await lockEscrowFromCard(amount, redirectUrl);
+    if (!result.ok) {
+      await sendIMessage(job.conversation_id, `card charge failed — ${result.error ?? "try again?"}`, user?.phone);
+      return;
+    }
+    // Card flow sends user to onramp URL
+    if (result.onrampUrl) {
+      await sendIMessage(job.conversation_id, `tap here to pay with card:\n${result.onrampUrl}`, user?.phone);
+    }
+  } else {
+    const result = await lockEscrowFromUsdc(amount);
+    if (!result.ok) {
+      await sendIMessage(job.conversation_id, `usdc transfer failed — ${result.error ?? "check balance?"}`, user?.phone);
+      await updateJob(jobId, { status: "failed" });
+      return;
+    }
+  }
+
+  // Funds locked — notify user
+  await sendIMessage(
+    job.conversation_id,
+    `$${amount.toFixed(0)} locked in escrow. ${lead.name.toLowerCase()} is confirmed.\ni'll release payment once you tell me the job's done.`,
+    user?.phone,
+  );
+  await logMessage({ jobId: job.id, direction: "outbound", channel: "imessage", body: `Escrow locked: $${amount.toFixed(0)}` });
+
+  // Send payout link to provider
+  const payoutUrl = buildPayoutUrl(escrow.payout_token, env.PUBLIC_BASE_URL);
+  if (lead.payment_method === "ach" && lead.phone) {
+    await sendIMessage(
+      `provider_${lead.id}`,
+      `hey ${lead.name.split(" ")[0].toLowerCase()} — you're booked. $${amount.toFixed(0)} will be released after the job's done.\nset up your payout here: ${payoutUrl}`,
+      lead.phone,
+    );
+  }
+
+  await updateJob(jobId, { status: "awaiting_completion" });
+}
+
+export async function releasePayment(jobId: number): Promise<void> {
+  const job = await getJob(jobId);
+  if (!job) return;
+  const escrow = await getEscrowByJobId(jobId);
+  if (!escrow || escrow.status !== "held") return;
+  const lead = await getLead(escrow.lead_id);
+  if (!lead) return;
+  const user = await getUserByConversation(job.conversation_id);
+  const amount = escrow.amount_cents / 100;
+
+  const method = escrow.provider_payout_method ?? lead.payment_method;
+
+  let success = false;
+  let txInfo = "";
+
+  if (method === "card") {
+    const result = await releaseToVirtualCard(amount, lead.name);
+    success = result.ok;
+    if (!result.ok) txInfo = result.error ?? "card payment failed";
+  } else if (method === "ach") {
+    const accountId = escrow.provider_payout_account_id;
+    if (!accountId) {
+      await sendIMessage(
+        job.conversation_id,
+        `${lead.name.toLowerCase()} hasn't set up their bank account yet — i'll remind them and release once they do`,
+        user?.phone,
+      );
+      return;
+    }
+    const result = await releaseToBank(amount, accountId);
+    success = result.ok;
+    txInfo = result.txHash ?? "";
+  } else {
+    // Fallback: pay USDC directly to demo address
+    const { payUsdc } = await import("./sponge");
+    const result = await payUsdc(amount, env.SPONGE_DEMO_PAYEE_ADDRESS);
+    success = result.ok;
+    txInfo = result.explorerUrl ?? "";
+  }
+
+  if (success) {
+    await updateEscrowPayment(escrow.id, { status: "released", release_tx_hash: txInfo || null });
     await updateJob(jobId, { status: "complete" });
-    const url = result.explorerUrl ? `\n${result.explorerUrl}` : "";
+    const methodLabel = method === "card" ? "virtual card" : method === "ach" ? "bank transfer" : "usdc";
     await sendIMessage(
       job.conversation_id,
-      `done — $${amount.toFixed(0)} sent to ${lead.name}${url}`,
+      `done — $${amount.toFixed(0)} released to ${lead.name.toLowerCase()} via ${methodLabel}.${txInfo ? `\n${txInfo}` : ""}`,
       user?.phone,
     );
+
     if (user) {
       const today = new Date().toISOString().split("T")[0];
       await addMemory(
         user.container_tag,
-        `Last booked ${job.service} from ${lead.name} on ${today} for $${amount.toFixed(0)}. Went well.`,
-        { type: "booking_complete", leadId: lead.id, jobId: job.id, txHash: result.txHash, date: today },
+        `Booked ${job.service} from ${lead.name} on ${today} for $${amount.toFixed(0)}. Paid via ${methodLabel}.`,
+        { type: "booking_complete", leadId: lead.id, jobId: job.id, date: today },
       );
       await addProviderFeedback(
         user.container_tag,
         lead.name,
         job.service ?? "service",
-        `Booked and paid $${amount.toFixed(0)} on ${today}. Transaction completed successfully.`,
+        `Booked and paid $${amount.toFixed(0)} on ${today} via ${methodLabel}.`,
         "positive",
       );
     }
   } else {
-    await updateJob(jobId, { status: "failed" });
     await sendIMessage(
       job.conversation_id,
-      `payment didn't go through — ${result.error ?? "not sure why"}, want me to retry?`,
+      `payment release failed — ${txInfo || "not sure why"}. want me to retry?`,
       user?.phone,
     );
+  }
+}
+
+export async function refundPayment(jobId: number): Promise<void> {
+  const job = await getJob(jobId);
+  if (!job) return;
+  const escrow = await getEscrowByJobId(jobId);
+  if (!escrow || escrow.status !== "held") return;
+  const user = await getUserByConversation(job.conversation_id);
+  const amount = escrow.amount_cents / 100;
+
+  const userAddress = user?.sponge_wallet_address;
+  if (!userAddress) {
+    await updateEscrowPayment(escrow.id, { status: "refunded" });
+    await updateJob(jobId, { status: "failed" });
+    await sendIMessage(job.conversation_id, `refunding $${amount.toFixed(0)} — job cancelled`, user?.phone);
+    return;
+  }
+
+  const result = await refundEscrow(amount, userAddress);
+  if (result.ok) {
+    await updateEscrowPayment(escrow.id, { status: "refunded", release_tx_hash: result.txHash ?? null });
+    await updateJob(jobId, { status: "failed" });
+    await sendIMessage(job.conversation_id, `refunded $${amount.toFixed(0)} back to your wallet`, user?.phone);
+  } else {
+    await sendIMessage(job.conversation_id, `refund failed — ${result.error ?? "will retry"}`, user?.phone);
   }
 }
