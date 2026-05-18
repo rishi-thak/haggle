@@ -98,7 +98,7 @@ export async function getServiceIntervals(
 
   for (const r of results) {
     // Parse "Last {service} completed on {date}"
-    const match = r.content.match(/^Last (.+?) completed on (\d{4}-\d{2}-\d{2})$/);
+    const match = (r.content ?? "").match(/^Last (.+?) completed on (\d{4}-\d{2}-\d{2})$/);
     if (match) {
       const service = match[1];
       const lastDate = match[2];

@@ -20,7 +20,7 @@ export async function getServiceAddress(
   }
 
   // Fallback: parse from content like "Service address (home): 123 Oak St, Austin TX"
-  const match = results[0].content.match(/Service address \(([^)]+)\):\s*(.+)/i);
+  const match = (results[0].content ?? "").match(/Service address \(([^)]+)\):\s*(.+)/i);
   if (match) {
     return { address: match[2].trim(), label: match[1].trim() };
   }
@@ -61,7 +61,7 @@ export async function getSchedulingPreferences(
       preferences.push(r.content);
     } else {
       // Try to extract preference-like phrases
-      const content = r.content.toLowerCase();
+      const content = (r.content ?? "").toLowerCase();
       if (
         content.includes("prefer") ||
         content.includes("morning") ||
@@ -116,7 +116,7 @@ export async function getUserStyle(containerTag: string): Promise<UserStyle> {
   const styleResult = results.find((r) => r.metadata?.type === "communication_style");
   if (!styleResult) return { ...DEFAULT_STYLE };
 
-  const content = styleResult.content.toLowerCase();
+  const content = (styleResult.content ?? "").toLowerCase();
 
   const shortReplies = content.includes("short replies") || content.includes("brief");
   const usesEmoji = content.includes("uses emoji") || content.includes("emoji: yes");

@@ -58,8 +58,15 @@ export async function searchMemories(
       console.error("[supermemory] search failed", res.status, await res.text());
       return [];
     }
-    const json = (await res.json()) as { results?: MemoryResult[] };
-    return json.results ?? [];
+    const json = (await res.json()) as { results?: Array<Partial<MemoryResult> & { text?: string }> };
+    return (json.results ?? [])
+      .map((r) => ({
+        id: r.id ?? "",
+        content: r.content ?? r.text ?? "",
+        score: r.score,
+        metadata: r.metadata,
+      }))
+      .filter((r) => r.content.length > 0);
   } catch (e) {
     console.error("[supermemory] search error", e);
     return [];
