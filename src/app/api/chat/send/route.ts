@@ -40,9 +40,7 @@ export async function POST(req: Request) {
 
   await appendWebChatMessage({ conversationId, direction: "inbound", body: text });
 
-  handleInboundIMessage({ conversationId, fromPhone: phone, text }).catch((e) =>
-    console.error("[chat/send] handler error", e),
-  );
+  await handleInboundIMessage({ conversationId, fromPhone: phone, text });
 
   return NextResponse.json({ ok: true });
 }

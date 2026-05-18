@@ -1,4 +1,4 @@
-import { createOutboundCall, sendIMessage } from "./agentphone";
+import { createOutboundCall } from "./agentphone";
 import { sendUserMessage } from "./userChannel";
 import { sendColdEmail, sendFollowUpEmail } from "./agentmail";
 import {
@@ -453,7 +453,7 @@ export async function handleInboundIMessage(args: {
         await recordPostJobFeedback(user.container_tag, lead.name, existing.service ?? "service", rating.rating, rating.notes);
         await recordProviderRating(user.container_tag, lead.name, existing.service ?? "service", rating.rating, rating.notes);
         const thanks = rating.rating >= 4 ? "noted — i'll prioritize them next time" : rating.rating <= 2 ? "got it — i'll avoid them going forward" : "noted, thanks";
-        await sendIMessage(existing.conversation_id, thanks, user.phone);
+        await sendUserMessage(existing.conversation_id, thanks, user.phone);
       }
     }
     // Don't return — fall through to triage for new requests
@@ -1145,7 +1145,7 @@ async function runPayment(jobId: number, leadIdOverride?: number): Promise<void>
   const amount = (lead.quoted_price_cents ?? 0) / 100;
 
   // Ask user how they want to fund the escrow
-  await sendIMessage(
+  await sendUserMessage(
     job.conversation_id,
     `locking in ${lead.name.toLowerCase()} @ $${amount.toFixed(0)}. how do you wanna pay?\n• card (charge your card)\n• usdc (from your wallet)`,
     user?.phone,
@@ -1180,24 +1180,24 @@ export async function fundEscrow(jobId: number, fundingSource: "card" | "usdc"):
     const redirectUrl = `${env.PUBLIC_BASE_URL}/pay/${escrow.payout_token}`;
     const result = await lockEscrowFromCard(amount, redirectUrl);
     if (!result.ok) {
-      await sendIMessage(job.conversation_id, `card charge failed — ${result.error ?? "try again?"}`, user?.phone);
+      await sendUserMessage(job.conversation_id, `card charge failed — ${result.error ?? "try again?"}`, user?.phone);
       return;
     }
     // Card flow sends user to onramp URL
     if (result.onrampUrl) {
-      await sendIMessage(job.conversation_id, `tap here to pay with card:\n${result.onrampUrl}`, user?.phone);
+      await sendUserMessage(job.conversation_id, `tap here to pay with card:\n${result.onrampUrl}`, user?.phone);
     }
   } else {
     const result = await lockEscrowFromUsdc(amount);
     if (!result.ok) {
-      await sendIMessage(job.conversation_id, `usdc transfer failed — ${result.error ?? "check balance?"}`, user?.phone);
+      await sendUserMessage(job.conversation_id, `usdc transfer failed — ${result.error ?? "check balance?"}`, user?.phone);
       await updateJob(jobId, { status: "failed" });
       return;
     }
   }
 
   // Funds locked — notify user
-  await sendIMessage(
+  await sendUserMessage(
     job.conversation_id,
     `$${amount.toFixed(0)} locked in escrow. ${lead.name.toLowerCase()} is confirmed.\ni'll release payment once you tell me the job's done.`,
     user?.phone,
@@ -1207,7 +1207,7 @@ export async function fundEscrow(jobId: number, fundingSource: "card" | "usdc"):
   // Send payout link to provider
   const payoutUrl = buildPayoutUrl(escrow.payout_token, env.PUBLIC_BASE_URL);
   if (lead.payment_method === "ach" && lead.phone) {
-    await sendIMessage(
+    await sendUserMessage(
       `provider_${lead.id}`,
       `hey ${lead.name.split(" ")[0].toLowerCase()} — you're booked. $${amount.toFixed(0)} will be released after the job's done.\nset up your payout here: ${payoutUrl}`,
       lead.phone,
@@ -1239,7 +1239,7 @@ export async function releasePayment(jobId: number): Promise<void> {
   } else if (method === "ach") {
     const accountId = escrow.provider_payout_account_id;
     if (!accountId) {
-      await sendIMessage(
+      await sendUserMessage(
         job.conversation_id,
         `${lead.name.toLowerCase()} hasn't set up their bank account yet — i'll remind them and release once they do`,
         user?.phone,
@@ -1304,11 +1304,11 @@ export async function releasePayment(jobId: number): Promise<void> {
 
       // Ask for feedback after a short delay (sent as next message)
       const ratingMsg = askForRating(job.service ?? "service", lead.name);
-      await sendIMessage(job.conversation_id, ratingMsg, user.phone);
+      await sendUserMessage(job.conversation_id, ratingMsg, user.phone);
       await logMessage({ jobId: job.id, direction: "outbound", channel: "imessage", body: ratingMsg });
     }
   } else {
-    await sendIMessage(
+    await sendUserMessage(
       job.conversation_id,
       `payment release failed — ${txInfo || "not sure why"}. want me to retry?`,
       user?.phone,
@@ -1329,7 +1329,7 @@ export async function refundPayment(jobId: number): Promise<void> {
   if (!userAddress) {
     await updateEscrowPayment(escrow.id, { status: "refunded" });
     await updateJob(jobId, { status: "failed" });
-    await sendIMessage(job.conversation_id, `refunding $${amount.toFixed(0)} — job cancelled`, user?.phone);
+    await sendUserMessage(job.conversation_id, `refunding $${amount.toFixed(0)} — job cancelled`, user?.phone);
     return;
   }
 
@@ -1337,8 +1337,8 @@ export async function refundPayment(jobId: number): Promise<void> {
   if (result.ok) {
     await updateEscrowPayment(escrow.id, { status: "refunded", release_tx_hash: result.txHash ?? null });
     await updateJob(jobId, { status: "failed" });
-    await sendIMessage(job.conversation_id, `refunded $${amount.toFixed(0)} back to your wallet`, user?.phone);
+    await sendUserMessage(job.conversation_id, `refunded $${amount.toFixed(0)} back to your wallet`, user?.phone);
   } else {
-    await sendIMessage(job.conversation_id, `refund failed — ${result.error ?? "will retry"}`, user?.phone);
+    await sendUserMessage(job.conversation_id, `refund failed — ${result.error ?? "will retry"}`, user?.phone);
   }
 }
