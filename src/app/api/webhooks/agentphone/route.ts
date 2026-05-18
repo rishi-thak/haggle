@@ -65,9 +65,12 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: "missing fields" }, { status: 400 });
     }
     const { handleInboundIMessage } = await import("@/lib/orchestrator");
-    await handleInboundIMessage({ conversationId, fromPhone, toPhone, text }).catch((e) =>
-      console.error("[webhook/agentphone] inbound handler", e),
-    );
+    try {
+      await handleInboundIMessage({ conversationId, fromPhone, toPhone, text });
+    } catch (e) {
+      console.error("[webhook/agentphone] inbound handler", e);
+      return NextResponse.json({ ok: false, error: "handler failed" }, { status: 500 });
+    }
     return NextResponse.json({ ok: true });
   }
 

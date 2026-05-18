@@ -1127,6 +1127,48 @@ export const updateEscrowPayment = mutation({
 });
 
 
+export const appendCallTurn = mutation({
+  args: {
+    callId: v.string(),
+    role: v.string(),
+    text: v.string(),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.insert("call_turns", {
+      call_id: args.callId,
+      role: args.role,
+      text: args.text,
+      created_at: now(),
+    });
+  },
+});
+
+export const getCallTurns = query({
+  args: { callId: v.string() },
+  handler: async (ctx, args) => {
+    const rows = await ctx.db
+      .query("call_turns")
+      .withIndex("by_call_id", (q) => q.eq("call_id", args.callId))
+      .collect();
+    return rows
+      .sort((a, b) => a.created_at - b.created_at)
+      .map((r) => ({ role: r.role, text: r.text }));
+  },
+});
+
+export const deleteCallTurns = mutation({
+  args: { callId: v.string() },
+  handler: async (ctx, args) => {
+    const rows = await ctx.db
+      .query("call_turns")
+      .withIndex("by_call_id", (q) => q.eq("call_id", args.callId))
+      .collect();
+    for (const row of rows) {
+      await ctx.db.delete(row._id);
+    }
+  },
+});
+
 export const listWebChatMessages = query({
   args: {
     conversationId: v.string(),

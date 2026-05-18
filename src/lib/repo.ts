@@ -510,3 +510,24 @@ export async function updateEscrowPayment(
     patch: compact(patch as JsonRecord),
   });
 }
+
+// --- Call turns (persisted across serverless instances) ---
+
+export async function appendCallTurn(
+  callId: string,
+  role: "agent" | "lead",
+  text: string,
+): Promise<void> {
+  await convexClient().mutation(api.repo.appendCallTurn, { callId, role, text });
+}
+
+export async function getCallTurns(
+  callId: string,
+): Promise<{ role: "agent" | "lead"; text: string }[]> {
+  const rows = await convexClient().query(api.repo.getCallTurns, { callId });
+  return rows as { role: "agent" | "lead"; text: string }[];
+}
+
+export async function deleteCallTurns(callId: string): Promise<void> {
+  await convexClient().mutation(api.repo.deleteCallTurns, { callId });
+}

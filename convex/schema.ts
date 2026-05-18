@@ -151,6 +151,13 @@ export default defineSchema({
     created_at: v.number(),
   }).index("by_conversation_id_and_created_at", ["conversation_id", "created_at"]),
 
+  call_turns: defineTable({
+    call_id: v.string(),
+    role: v.string(),
+    text: v.string(),
+    created_at: v.number(),
+  }).index("by_call_id", ["call_id", "created_at"]),
+
   webhook_deliveries: defineTable({
     delivery_id: v.string(),
     source: v.string(),

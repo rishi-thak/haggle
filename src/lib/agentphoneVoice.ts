@@ -1,5 +1,5 @@
 import { after } from "next/server";
-import { findCallByAgentphoneId, getJob, getLead, getUserByConversation } from "@/lib/repo";
+import { appendCallTurn, deleteCallTurns, findCallByAgentphoneId, getCallTurns, getJob, getLead, getUserByConversation } from "@/lib/repo";
 import { nextTurn } from "@/lib/negotiator";
 import { recallProviderHistory } from "@/lib/supermemory";
 import type { NegotiationContext } from "@/lib/types";
@@ -9,9 +9,6 @@ type VoiceResponse = {
   hangup?: boolean;
   action?: "hangup";
 };
-
-// Per-call in-memory transcript buffer (cleared by process restart).
-const transcripts = new Map<string, { role: "agent" | "lead"; text: string }[]>();
 
 export async function buildAgentphoneVoiceResponse(body: Record<string, unknown>): Promise<VoiceResponse> {
   const data = (body.data as Record<string, unknown> | undefined) ?? {};
@@ -64,38 +61,40 @@ export async function buildAgentphoneVoiceResponse(body: Record<string, unknown>
     businessName: lead.name,
   };
 
-  const history = transcripts.get(callId) ?? [];
+  // Load transcript history from Convex (persisted across serverless instances)
+  const history = await getCallTurns(callId);
   const turn = await nextTurn(ctx, history, leadUtterance);
-  history.push({ role: "lead", text: leadUtterance });
-  history.push({ role: "agent", text: turn.text });
-  transcripts.set(callId, history);
 
-  // Safety cap: even if the LLM never signals hangup, end the call after a
-  // bounded number of turns so we don't loop forever.
+  // Persist the new turns
+  await appendCallTurn(callId, "lead", leadUtterance);
+  await appendCallTurn(callId, "agent", turn.text);
+
+  const turnCount = history.length + 2;
   const TURN_CAP = 16;
-  const hangup = turn.shouldHangup || history.length >= TURN_CAP;
+  const hangup = turn.shouldHangup || turnCount >= TURN_CAP;
   console.log("[agentphoneVoice] reply", {
     callId,
-    turnCount: history.length,
+    turnCount,
     hangup,
     text: turn.text,
   });
 
   if (hangup) {
-    // Drop the in-memory transcript and synthesize a plain-text version we can
-    // hand to summarizeCall + the rest of the post-call pipeline. We do this
-    // ourselves rather than waiting for Agentphone's `agent.call.completed`
-    // webhook because in practice that webhook is unreliable, which leaves the
-    // dashboard stuck on "calling" and the user's approval text never sends.
-    const transcript = history
+    const fullHistory = [...history, { role: "lead" as const, text: leadUtterance }, { role: "agent" as const, text: turn.text }];
+    const transcript = fullHistory
       .map((h) => `${h.role === "agent" ? "Me" : lead.name}: ${h.text}`)
       .join("\n");
-    transcripts.delete(callId);
 
-    // Run after the response is sent so we don't slow down the closing line.
-    // `recordCallEnd` is idempotent on `ended_at`, so if Agentphone's own
-    // completion webhook does fire later it'll no-op cleanly.
+    // Clean up stored turns + trigger post-call pipeline after response is sent.
+    // Using after() so the voice response isn't delayed, but also firing
+    // handleCallCompleted inline as a fallback since after() can be unreliable
+    // on serverless cold-recycle.
     after(async () => {
+      try {
+        await deleteCallTurns(callId);
+      } catch (e) {
+        console.error("[agentphoneVoice] deleteCallTurns failed", e);
+      }
       try {
         const { handleCallCompleted } = await import("@/lib/orchestrator");
         await handleCallCompleted({
