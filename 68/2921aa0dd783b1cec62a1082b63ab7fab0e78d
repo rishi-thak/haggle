@@ -1,0 +1,51 @@
+src/app/watch/[token]/watch-dashboard.tsx
+  s_18ace6b5b344ba::t_67a9f4e0c90eaa 192,199-200,202,219
+src/lib/orchestrator.ts
+  s_18ace6b5b344ba::t_ac7b821bcf57f2 637-640,652-655,662-665,766-770
+  s_18ace6b5b344ba::t_ec21a1dbf6e2bb 829-838
+  s_18ace6b5b344ba::t_ed83e7d1742025 999-1014,1022-1028,1030-1062,1064-1074,1078,1081,1085-1100,1104-1106,1108
+  s_18ace6b5b344ba::t_88c5f8209c4765 542-553
+  s_18ace6b5b344ba::t_a9ef4cbe8f6f14 181,183-187,209-275
+  s_18ace6b5b344ba::t_b94bc6ab9b9ce8 182
+src/app/api/webhooks/agentphone/route.ts
+  s_1fc5a44139f6af::t_9c4ddda03fd469 74-76
+src/lib/negotiator.ts
+  s_1fc5a44139f6af::t_8a795c647308f3 1,14,17,20,23-30,34-59
+  s_1fc5a44139f6af::t_21b98f4ffba204 230,232-234,236-256
+  s_1fc5a44139f6af::t_cae56046b29879 211-229,231,235,257,259-260,266,276,279-283,285-286,305,307-319
+  s_1fc5a44139f6af::t_9210e7abeb5719 287-298
+src/lib/agentphoneVoice.ts
+  s_1fc5a44139f6af::t_58844a2d428772 95-98,109
+  s_1fc5a44139f6af::t_bd63a5d95fd985 74-75,77-82
+  s_1fc5a44139f6af::t_349f5e9a0ef90e 83-94,99-108,110-114
+  s_1fc5a44139f6af::t_6332ce90c90eef 1
+  s_1fc5a44139f6af::t_b52584f946f372 47
+  s_1fc5a44139f6af::t_365b9a55d7233f 68,70,73,76
+  s_1fc5a44139f6af::t_8e78dd3dc34dd1 10
+src/lib/supermemory.ts
+  s_18ace6b5b344ba::t_97ef93d48a8c4c 19-81,124-128
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "682921aa0dd783b1cec62a1082b63ab7fab0e78d",
+  "prompts": {},
+  "sessions": {
+    "s_18ace6b5b344ba": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e38ac-a021-7570-946e-4e656a0d2eca",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Evan Taylor <eltaylor1104@gmail.com>"
+    },
+    "s_1fc5a44139f6af": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "90a378e8-d24d-4742-9198-e21eb746dda9",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Evan Taylor <eltaylor1104@gmail.com>"
+    }
+  }
+}
