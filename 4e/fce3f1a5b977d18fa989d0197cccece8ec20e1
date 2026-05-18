@@ -1,0 +1,37 @@
+convex/schema.ts
+  s_301a4929c30607::t_39aeb9732dd3f5 152
+src/lib/leadSelection.test.ts
+  s_301a4929c30607::t_95878172e9cc96 1-83
+src/lib/leadSelection.ts
+  s_301a4929c30607::t_af832cea5eead0 1-8,17-72,77-88
+  s_301a4929c30607::t_978742c57c188c 9-16,73-76
+src/app/watch/[token]/watch-dashboard.tsx
+  s_301a4929c30607::t_af832cea5eead0 12
+sentry.server.config.ts
+  s_301a4929c30607::t_af832cea5eead0 18
+sentry.edge.config.ts
+  s_301a4929c30607::t_af832cea5eead0 19
+convex/repo.ts
+  s_301a4929c30607::t_978742c57c188c 1136-1149
+  s_301a4929c30607::t_af832cea5eead0 318,324-333,341,1150
+src/lib/repo.ts
+  s_301a4929c30607::t_af832cea5eead0 179-186
+src/lib/orchestrator.ts
+  s_301a4929c30607::t_af832cea5eead0 63-67,443-444,567,702-704,726-732,840,881
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "4efce3f1a5b977d18fa989d0197cccece8ec20e1",
+  "prompts": {},
+  "sessions": {
+    "s_301a4929c30607": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e3884-3da4-7e32-9bf6-95b5e74aa4b1",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Evan Taylor <eltaylor1104@gmail.com>"
+    }
+  }
+}
