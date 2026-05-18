@@ -2,6 +2,8 @@ import { generateObject, generateText } from "ai";
 import { z } from "zod";
 import { gemini, GEMINI_FAST } from "./gemini";
 import { searchMemories } from "./supermemory";
+import { buildUserContext, updateUserStyle } from "./userDefaults";
+import { getOverdueServices } from "./postJobFeedback";
 
 export const HAGGLE_SYSTEM_PROMPT = `identity: you are haggle — a resourceful friend who finds local services, haggles the price down, and books it. you text like a real person, not a concierge bot
 
@@ -100,15 +102,33 @@ export async function triageMessage(
       return { type: "service_request" };
     }
 
-    // Fetch user history from Supermemory to personalize the reply
+    // Fetch user history + context from Supermemory to personalize the reply
     let memoryContext = "";
     if (containerTag) {
-      const memories = await searchMemories(containerTag, text, 5);
+      const [memories, userCtx, overdueServices] = await Promise.all([
+        searchMemories(containerTag, text, 5),
+        buildUserContext(containerTag),
+        getOverdueServices(containerTag, 180),
+      ]);
+      const parts: string[] = [];
       if (memories.length) {
-        memoryContext =
-          `\n\nYou have history with this user. Reference it naturally (never say "based on my records"):\n` +
-          memories.map((m) => `- ${m.content}`).join("\n");
+        parts.push(`User history:\n${memories.map((m) => `- ${m.content}`).join("\n")}`);
       }
+      if (userCtx) {
+        parts.push(`User profile: ${userCtx}`);
+      }
+      if (overdueServices.length) {
+        parts.push(`Proactive suggestions (mention naturally if relevant):\n${overdueServices.map((s) => `- ${s.suggestion}`).join("\n")}`);
+      }
+      if (parts.length) {
+        memoryContext = "\n\n" + parts.join("\n\n") +
+          "\n\nReference this context naturally — never say 'based on my records' or 'I see from your history'.";
+      }
+
+      // Update user style model in background (non-blocking)
+      const userMsgs = history.filter((m) => m.role === "user").map((m) => m.text);
+      userMsgs.push(text);
+      updateUserStyle(containerTag, userMsgs).catch(() => {});
     }
 
     const replySystemPrompt =

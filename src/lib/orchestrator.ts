@@ -20,6 +20,12 @@ import {
 } from "./sponge";
 import { addMemory, addProviderFeedback, getProviderReputation, recallProviderHistory, searchMemories } from "./supermemory";
 import { getNegotiationStatusSnapshot, summarizeCall } from "./negotiator";
+import { recordQuote, getPriceHistory, getBudgetInsight, buildPriceContext } from "./priceIntel";
+import { getPreferredProviders, shouldSkipScraping, recordBooking, recordProviderRating } from "./providerLoyalty";
+import { getServiceAddress, getSchedulingPreferences, updateUserStyle, buildUserContext } from "./userDefaults";
+import { buildNegotiationHints, inferTacticsFromTranscript, recordTactic, getReferralBoost } from "./negotiationTactics";
+import { askForRating, parseRatingReply, recordPostJobFeedback, recordServiceInterval } from "./postJobFeedback";
+import { parseReferralFromMessage, recordReferral, getReferralSource } from "./referralMemory";
 import {
   appendConversationMessage,
   createEscrowPayment,
@@ -396,6 +402,31 @@ export async function handleInboundIMessage(args: {
   const { conversationId, fromPhone, text } = args;
   const existing = await findActiveJobByConversation(conversationId);
 
+  // Handle post-job rating reply (job already complete, user is responding to "how was it?")
+  if (existing && existing.status === "complete") {
+    const rating = parseRatingReply(text);
+    if (rating.rating !== null && existing.winning_lead_id) {
+      const lead = await getLead(existing.winning_lead_id);
+      const user = await getUserByConversation(existing.conversation_id);
+      if (lead && user) {
+        await recordPostJobFeedback(user.container_tag, lead.name, existing.service ?? "service", rating.rating, rating.notes);
+        await recordProviderRating(user.container_tag, lead.name, existing.service ?? "service", rating.rating, rating.notes);
+        const thanks = rating.rating >= 4 ? "noted — i'll prioritize them next time" : rating.rating <= 2 ? "got it — i'll avoid them going forward" : "noted, thanks";
+        await sendIMessage(existing.conversation_id, thanks, user.phone);
+      }
+    }
+    // Don't return — fall through to triage for new requests
+  }
+
+  // Handle referral detection in messages
+  if (!existing || isTerminalJobStatus(existing.status)) {
+    const referral = parseReferralFromMessage(text);
+    if (referral.providerName && referral.source) {
+      const user = await getOrCreateUser(fromPhone);
+      await recordReferral(user.container_tag, referral.providerName, "general", referral.source);
+    }
+  }
+
   // Handle payment funding source selection (card / usdc)
   if (existing && existing.status === "paying") {
     await logMessage({ jobId: existing.id, direction: "inbound", channel: "imessage", body: text });
@@ -562,36 +593,86 @@ async function runFullJob(jobId: number, containerTag: string): Promise<void> {
 
   // 1. Parse intent
   const intent = await parseIntent(job0.intent_raw);
-  const budgetCents = intent.budgetCents ?? 10000;
+  let budgetCents = intent.budgetCents ?? 10000;
+
+  // 1b. Budget calibration: adjust based on past spending patterns
+  const budgetInsight = await getBudgetInsight(containerTag, intent.service, budgetCents);
+  if (budgetInsight.adjustedBudgetCents !== budgetCents) {
+    budgetCents = budgetInsight.adjustedBudgetCents;
+  }
+
+  // 1c. Resolve location from memory if not specified
+  let location = intent.location;
+  if (!location || location === "unknown" || location === "not specified") {
+    const savedAddr = await getServiceAddress(containerTag);
+    if (savedAddr) {
+      location = savedAddr.address;
+    }
+  }
+
+  // 1d. Pull scheduling preferences
+  const schedPrefs = await getSchedulingPreferences(containerTag);
+  const timeframe = intent.timeframe || (schedPrefs.length ? schedPrefs[0] : "ASAP");
+
   await updateJob(jobId, {
     service: intent.service,
-    location: intent.location,
+    location,
     budget_cents: budgetCents,
-    timeframe: intent.timeframe,
+    timeframe,
     status: "searching",
   });
 
   // Persist the request to memory
   await addMemory(
     containerTag,
-    `Requested ${intent.service} in ${intent.location} with budget $${(budgetCents / 100).toFixed(0)}, timeframe ${intent.timeframe}.`,
+    `Requested ${intent.service} in ${location} with budget $${(budgetCents / 100).toFixed(0)}, timeframe ${timeframe}.`,
     { type: "request", jobId },
   );
 
   const job = (await getJob(jobId))!;
+
+  // 1e. Send budget insight if available
+  if (budgetInsight.insight) {
+    await notify(job, budgetInsight.insight);
+  }
+
   await notify(
     job,
-    `${intent.service} in ${intent.location}, ${intent.timeframe} — searching now`,
+    `${intent.service} in ${location}, ${timeframe} — searching now`,
   );
 
-  // 2. Lead gen
+  // 2. Check provider loyalty — maybe we already have a preferred provider
+  const loyaltyCheck = await shouldSkipScraping(containerTag, intent.service);
+  if (loyaltyCheck.skip && loyaltyCheck.providers.length > 0) {
+    await notify(job, loyaltyCheck.suggestion ?? "you've used someone before — checking if they're available");
+
+    // Insert preferred providers as leads and call them first
+    for (const prov of loyaltyCheck.providers) {
+      await insertLead({
+        job_id: jobId,
+        name: prov.name,
+        phone: prov.phone ?? null,
+        email: prov.email ?? null,
+        address: null,
+        rating: null,
+        source_url: null,
+        rank_score: 15,
+        status: "pending",
+        quoted_price_cents: null,
+        payment_method: null,
+        notes: "returning provider from memory",
+      });
+    }
+  }
+
+  // 2b. Scrape new leads (always, to give options alongside loyalty picks)
   const scraped = await scrapeLeads(
     intent.service,
-    intent.location,
-    MAX_LEADS,
+    location,
+    loyaltyCheck.skip ? MAX_LEADS - loyaltyCheck.providers.length : MAX_LEADS,
     createBrowserUseObserver(jobId, "Lead search", "lead_search"),
   );
-  if (!scraped.length) {
+  if (!scraped.length && !loyaltyCheck.skip) {
     await updateJob(jobId, { status: "failed" });
     await notify(job, "couldn't find anyone for that — try rephrasing or a different area?");
     return;
@@ -600,10 +681,9 @@ async function runFullJob(jobId: number, containerTag: string): Promise<void> {
   // 3. Pull user prefs from memory
   await searchMemories(containerTag, `preferences for ${intent.service}`, 5);
 
-  // 4. Persist + rank
-  let leads: Lead[] = [];
+  // 4. Persist scraped leads
   for (const s of scraped) {
-    const lead = await insertLead({
+    await insertLead({
       job_id: jobId,
       name: s.name,
       phone: s.phone ?? null,
@@ -617,8 +697,10 @@ async function runFullJob(jobId: number, containerTag: string): Promise<void> {
       payment_method: null,
       notes: null,
     });
-    leads.push(lead);
   }
+
+  // Fetch all leads (loyalty + scraped) and rank
+  let leads = await listLeads(jobId);
   leads.sort((a, b) => (b.rank_score ?? 0) - (a.rank_score ?? 0));
 
   // 4b. Apply memory-based ranking: boost/penalize/filter providers
@@ -740,6 +822,14 @@ export async function handleCallCompleted(args: {
   const containerTag = user?.container_tag ?? `user_unknown`;
 
   const past = await recallProviderHistory(containerTag, job.service ?? "", lead.name);
+
+  // Pull negotiation tactics + referral boost from memory
+  const [negHints, referralBoost] = await Promise.all([
+    buildNegotiationHints(containerTag, lead.name, job.service ?? "service", job.budget_cents ?? 10000),
+    getReferralBoost(containerTag, lead.name),
+  ]);
+
+  const enrichmentParts = [lead.notes, negHints, referralBoost].filter(Boolean);
   const ctx: NegotiationContext = {
     jobId: job.id,
     leadId: lead.id,
@@ -749,7 +839,7 @@ export async function handleCallCompleted(args: {
     timeframe: job.timeframe ?? "ASAP",
     userPreferences: [],
     pastProviderNotes: past.summary,
-    enrichmentNotes: lead.notes ?? undefined,
+    enrichmentNotes: enrichmentParts.join(" | ") || undefined,
     businessName: lead.name,
   };
 
@@ -767,6 +857,22 @@ export async function handleCallCompleted(args: {
     `Called ${lead.name} for ${job.service}: ${result.summary}`,
     { type: "call_result", leadId: lead.id, jobId: job.id, outcome: result.outcome },
   );
+
+  // Record price quote for future intel
+  if (result.quotedPriceCents) {
+    await recordQuote(containerTag, job.service ?? "service", lead.name, result.quotedPriceCents);
+  }
+
+  // Infer and record negotiation tactics from the transcript
+  const inferredTactics = inferTacticsFromTranscript(
+    args.transcript,
+    result.outcome,
+    result.quotedPriceCents,
+    job.budget_cents ?? 10000,
+  );
+  for (const t of inferredTactics.tactics) {
+    await recordTactic(containerTag, lead.name, job.service ?? "service", t.description, t.worked);
+  }
 
   // Store structured provider feedback
   if (result.outcome === "agreed") {
@@ -1007,14 +1113,33 @@ export async function releasePayment(jobId: number): Promise<void> {
     await updateEscrowPayment(escrow.id, { status: "released", release_tx_hash: txInfo || null });
     await updateJob(jobId, { status: "complete" });
     const methodLabel = method === "card" ? "virtual card" : method === "ach" ? "bank transfer" : "usdc";
+
+    // Build price context for the user
+    const priceCtx = user ? await buildPriceContext(user.container_tag, job.service ?? "service", escrow.amount_cents) : null;
+    const priceNote = priceCtx ? `\n${priceCtx}` : "";
+
     await sendIMessage(
       job.conversation_id,
-      `done — $${amount.toFixed(0)} released to ${lead.name.toLowerCase()} via ${methodLabel}.${txInfo ? `\n${txInfo}` : ""}`,
+      `done — $${amount.toFixed(0)} released to ${lead.name.toLowerCase()} via ${methodLabel}.${txInfo ? `\n${txInfo}` : ""}${priceNote}`,
       user?.phone,
     );
 
     if (user) {
       const today = new Date().toISOString().split("T")[0];
+
+      // Record booking for loyalty system
+      await recordBooking(
+        user.container_tag,
+        job.service ?? "service",
+        lead.name,
+        escrow.amount_cents,
+        lead.phone,
+        lead.email,
+      );
+
+      // Record service interval for proactive reminders
+      await recordServiceInterval(user.container_tag, job.service ?? "service");
+
       await addMemory(
         user.container_tag,
         `Booked ${job.service} from ${lead.name} on ${today} for $${amount.toFixed(0)}. Paid via ${methodLabel}.`,
@@ -1027,6 +1152,11 @@ export async function releasePayment(jobId: number): Promise<void> {
         `Booked and paid $${amount.toFixed(0)} on ${today} via ${methodLabel}.`,
         "positive",
       );
+
+      // Ask for feedback after a short delay (sent as next message)
+      const ratingMsg = askForRating(job.service ?? "service", lead.name);
+      await sendIMessage(job.conversation_id, ratingMsg, user.phone);
+      await logMessage({ jobId: job.id, direction: "outbound", channel: "imessage", body: ratingMsg });
     }
   } else {
     await sendIMessage(
