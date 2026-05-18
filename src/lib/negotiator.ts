@@ -246,14 +246,12 @@ const GOODBYE_PATTERNS = [
 
 const VOICEMAIL_PATTERNS = [
   /\bvoicemail\b/i,
-  /\bleave (a |your )?message\b/i,
-  /\byou'?ve reached\b/i,
-  /\bmailbox\b/i,
-  /\bnot available\b/i,
   /\bafter the (tone|beep)\b/i,
-  /\brecord (a |your )?message\b/i,
-  /\bplease (leave|record)\b/i,
   /\bat the tone\b/i,
+  /\bmailbox (is )?full\b/i,
+  /\bleave (a |your )?message after\b/i,
+  /\bnot available.{0,20}leave (a |your )?message\b/i,
+  /\byou'?ve reached.{0,40}(leave|record|not available|unavailable)\b/i,
 ];
 
 // If the agent says one of these in its own outgoing turn, the call is done.
