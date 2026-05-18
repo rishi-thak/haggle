@@ -74,18 +74,30 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true });
   }
 
-  // Call completed. Accept both `agent.call.*` and the shorter `call.*` event
-  // names since Agentphone's payloads have varied in practice.
-  if (/^(agent\.)?call\.(completed|failed|no_answer|ended)$/.test(event)) {
-    const callId = String(body.callId ?? (body.data as Record<string, unknown> | undefined)?.callId ?? "");
+  // Call ended. Agentphone sends `agent.call_ended` (underscore) per their docs.
+  // Also accept dot-separated variants for safety.
+  if (/^(agent[._])?call[._](completed|failed|no_answer|ended)$/.test(event)) {
     const data = (body.data as Record<string, unknown>) ?? {};
-    const transcript = String(data.transcript ?? body.transcript ?? "");
-    const outcome = String(data.outcome ?? body.outcome ?? event.split(".").pop() ?? "");
+    const callId = String(data.callId ?? body.callId ?? "");
+    // Transcript can be a string or array of {role, content} objects
+    let transcript = "";
+    const rawTranscript = data.transcript ?? body.transcript;
+    if (typeof rawTranscript === "string") {
+      transcript = rawTranscript;
+    } else if (Array.isArray(rawTranscript)) {
+      transcript = rawTranscript
+        .map((t: Record<string, string>) => `${t.role ?? "unknown"}: ${t.content ?? t.text ?? ""}`)
+        .join("\n");
+    }
+    const outcome = String(data.status ?? data.outcome ?? body.outcome ?? "completed");
     if (!callId) return NextResponse.json({ ok: false, error: "missing callId" }, { status: 400 });
     const { handleCallCompleted } = await import("@/lib/orchestrator");
-    await handleCallCompleted({ agentphoneCallId: callId, transcript, outcome }).catch((e) =>
-      console.error("[webhook/agentphone] call handler", e),
-    );
+    try {
+      await handleCallCompleted({ agentphoneCallId: callId, transcript, outcome });
+    } catch (e) {
+      console.error("[webhook/agentphone] call handler", e);
+      return NextResponse.json({ ok: false, error: "call handler failed" }, { status: 500 });
+    }
     return NextResponse.json({ ok: true });
   }
 
