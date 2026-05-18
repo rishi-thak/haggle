@@ -8,6 +8,14 @@ export const IntentSchema = z.object({
   budgetCents: z.number().int().nullable().describe("Max budget in USD cents, or null if unspecified."),
   timeframe: z.string().describe("When the user wants it done, e.g. 'this weekend', 'today', 'ASAP'."),
   notes: z.string().describe("Any other constraints or preferences worth passing to providers."),
+  specificProvider: z
+    .string()
+    .nullable()
+    .describe(
+      "Exact business name if the user named a specific provider they want called " +
+        "(e.g. 'call Mike's Auto Detail and book it' → 'Mike's Auto Detail'). " +
+        "null if the user just described a service generically.",
+    ),
 });
 
 export type Intent = z.infer<typeof IntentSchema>;
@@ -24,7 +32,9 @@ export async function parseIntent(userMessage: string): Promise<Intent> {
         `Extract a structured service request from this user text.\n\n` +
         `User: "${userMessage}"\n\n` +
         `If budget contains "under $100" or "$50", convert to cents. ` +
-        `If no location, return "San Francisco". If no timeframe, return "ASAP".`,
+        `If no location, return "San Francisco". If no timeframe, return "ASAP". ` +
+        `specificProvider: only set if the user names a specific business (e.g. "call Joe's Detail", ` +
+        `"book me with Mike's Plumbing"). Generic phrases like "find a plumber" → null.`,
     });
     return object;
   } catch (e) {
@@ -47,5 +57,6 @@ function fallbackParse(s: string): Intent {
     budgetCents,
     timeframe: /today|asap|now/i.test(lower) ? "today" : /weekend/i.test(lower) ? "this weekend" : "ASAP",
     notes: "",
+    specificProvider: null,
   };
 }

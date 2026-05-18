@@ -10,8 +10,11 @@ export type NegotiationOutcome = (typeof NEGOTIATION_OUTCOME_VALUES)[number];
 
 export type JobStatus =
   | "new"
+  | "researching"
+  | "gathering_info"
   | "searching"
   | "ranked"
+  | "awaiting_approval"
   | "calling"
   | "negotiating"
   | "awaiting_callback"
@@ -46,6 +49,8 @@ export interface User {
   phone: string;
   container_tag: string;
   sponge_wallet_address: string | null;
+  /** Number the user last messaged us on — used as the from for replies. */
+  preferred_from_number: string | null;
   created_at: number;
 }
 

@@ -1,4 +1,5 @@
-import { sendIMessage, createOutboundCall } from "./agentphone";
+import { createOutboundCall, sendIMessage } from "./agentphone";
+import { sendUserMessage } from "./userChannel";
 import { sendColdEmail, sendFollowUpEmail } from "./agentmail";
 import {
   enrichLead,
@@ -7,7 +8,8 @@ import {
   type BrowserUseObservedSession,
   type BrowserUseTaskObserver,
 } from "./browseruse";
-import { parseIntent } from "./intent";
+import { parseIntent, type Intent } from "./intent";
+import { gatherResearch } from "./research";
 import { triageMessage } from "./triage";
 import { classifyJobControl } from "./jobControl";
 import { getJobStatusText } from "./jobStatus";
@@ -19,7 +21,7 @@ import {
   refundEscrow,
 } from "./sponge";
 import { addMemory, addProviderFeedback, getProviderReputation, recallProviderHistory, searchMemories } from "./supermemory";
-import { getNegotiationStatusSnapshot, summarizeCall } from "./negotiator";
+import { buildSystemPrompt, getNegotiationStatusSnapshot, summarizeCall } from "./negotiator";
 import { recordQuote, getPriceHistory, getBudgetInsight, buildPriceContext } from "./priceIntel";
 import { getPreferredProviders, shouldSkipScraping, recordBooking, recordProviderRating } from "./providerLoyalty";
 import { getServiceAddress, getSchedulingPreferences, updateUserStyle, buildUserContext } from "./userDefaults";
@@ -38,6 +40,7 @@ import {
   getOrCreateUser,
   getRecentMessages,
   getUserByConversation,
+  setUserPreferredFromNumber,
   insertLead,
   listLeads,
   logMessage,
@@ -122,7 +125,12 @@ function createBrowserUseObserver(jobId: number, label: string, phase: string): 
 
 async function notify(job: Job, text: string): Promise<void> {
   const user = await getUserByConversation(job.conversation_id);
-  await sendIMessage(job.conversation_id, text, user?.phone);
+  await sendUserMessage(
+    job.conversation_id,
+    text,
+    user?.phone,
+    user?.preferred_from_number ?? undefined,
+  );
   await logMessage({ jobId: job.id, direction: "outbound", channel: "imessage", body: text });
 }
 
@@ -156,6 +164,14 @@ function resolveSelectionIndex(text: string, agreedLeads: Lead[]): number | null
   }
   if (isConfirmation(trimmed)) return 0;
   return null;
+}
+
+function isApproval(text: string): boolean {
+  return /\b(go|yes|sounds good|yep|yeah|ok|okay|sure|do it|call them|approved?|👍)\b/i.test(text);
+}
+
+function isSkip(text: string): boolean {
+  return /\b(skip|just go|whatever|idk|i don'?t know|nm|no preference|just call|move on)\b/i.test(text);
 }
 
 function rankLead(l: {
@@ -315,7 +331,12 @@ async function resolveJobAfterLeadUpdate(jobId: number): Promise<void> {
     const claimed = await markJobAwaitingConfirmIfOpen(job.id, cheapest.id);
     if (!claimed) return;
     const text = buildComparisonMessage(agreedLeads);
-    await sendIMessage(job.conversation_id, text, user?.phone);
+    await sendUserMessage(
+      job.conversation_id,
+      text,
+      user?.phone,
+      user?.preferred_from_number ?? undefined,
+    );
     await logMessage({
       jobId: job.id,
       direction: "outbound",
@@ -334,7 +355,12 @@ async function resolveJobAfterLeadUpdate(jobId: number): Promise<void> {
     if (job.status !== "awaiting_callback") {
       await updateJob(job.id, { status: "awaiting_callback" });
       const text = "got a reply but they need to confirm still — i'll text you when it's solid";
-      await sendIMessage(job.conversation_id, text, user?.phone);
+      await sendUserMessage(
+        job.conversation_id,
+        text,
+        user?.phone,
+        user?.preferred_from_number ?? undefined,
+      );
       await logMessage({ jobId: job.id, direction: "outbound", channel: "imessage", body: text });
     }
     return;
@@ -343,7 +369,12 @@ async function resolveJobAfterLeadUpdate(jobId: number): Promise<void> {
   const failed = await markJobFailedIfUnresolved(job.id);
   if (!failed) return;
   const failText = "no one could match the budget — want me to try a higher number or different area?";
-  await sendIMessage(job.conversation_id, failText, user?.phone);
+  await sendUserMessage(
+    job.conversation_id,
+    failText,
+    user?.phone,
+    user?.preferred_from_number ?? undefined,
+  );
   await logMessage({ jobId: job.id, direction: "outbound", channel: "imessage", body: failText });
 }
 
@@ -397,9 +428,19 @@ async function applyMemoryToLeads(
 export async function handleInboundIMessage(args: {
   conversationId: string;
   fromPhone: string;
+  toPhone?: string;
   text: string;
 }): Promise<void> {
-  const { conversationId, fromPhone, text } = args;
+  const { conversationId, fromPhone, toPhone, text } = args;
+
+  // Remember which of our numbers the user texted so replies go back on the
+  // same channel (iMessage vs SMS).
+  if (toPhone) {
+    await setUserPreferredFromNumber(fromPhone, toPhone).catch((e) =>
+      console.error("[orchestrator] setUserPreferredFromNumber failed", e),
+    );
+  }
+
   const existing = await findActiveJobByConversation(conversationId);
 
   // Handle post-job rating reply (job already complete, user is responding to "how was it?")
@@ -486,6 +527,48 @@ export async function handleInboundIMessage(args: {
 
   // Smart job control for active jobs
   if (existing && !isTerminalJobStatus(existing.status)) {
+    // Payment confirmation
+    if (existing.status === "awaiting_confirm" && isConfirmation(text)) {
+      await logMessage({ jobId: existing.id, direction: "inbound", channel: "imessage", body: text });
+      await runPayment(existing.id);
+      return;
+    }
+
+    // User is answering clarifying questions — fold their reply into the
+    // job intent, then go search.
+    if (existing.status === "gathering_info") {
+      await logMessage({ jobId: existing.id, direction: "inbound", channel: "imessage", body: text });
+      const expanded = `${existing.intent_raw}\n\nuser follow-up details: ${text}`;
+      await updateJob(existing.id, { intent_raw: expanded });
+      const user = await getOrCreateUser(fromPhone);
+      await notify(existing, "got it — searching now");
+      runLeadSearchAndApproval(existing.id, user.container_tag).catch((e) =>
+        console.error("[orchestrator] runLeadSearchAndApproval crashed", e),
+      );
+      return;
+    }
+
+    // User is reviewing the list of providers — approve to call, or
+    // give feedback and we re-search.
+    if (existing.status === "awaiting_approval") {
+      await logMessage({ jobId: existing.id, direction: "inbound", channel: "imessage", body: text });
+      const user = await getOrCreateUser(fromPhone);
+      if (isApproval(text) || isSkip(text)) {
+        await notify(existing, "calling them now");
+        runCalls(existing.id, user.container_tag).catch((e) =>
+          console.error("[orchestrator] runCalls crashed", e),
+        );
+      } else {
+        const expanded = `${existing.intent_raw}\n\nuser feedback on options: ${text}`;
+        await updateJob(existing.id, { intent_raw: expanded });
+        await notify(existing, "got it — re-searching with that in mind");
+        runLeadSearchAndApproval(existing.id, user.container_tag).catch((e) =>
+          console.error("[orchestrator] runLeadSearchAndApproval crashed", e),
+        );
+      }
+      return;
+    }
+
     await logMessage({ jobId: existing.id, direction: "inbound", channel: "imessage", body: text });
 
     const intent = await classifyJobControl(text);
@@ -555,13 +638,14 @@ export async function handleInboundIMessage(args: {
   // Fetch conversation history for context-aware triage
   const history = await getRecentMessages(conversationId);
   const user = await getOrCreateUser(fromPhone);
+  const replyFrom = toPhone ?? user.preferred_from_number ?? undefined;
 
   // Triage: is this casual chat, partial intent, or a real service request?
   const triage = await triageMessage(text, { history, containerTag: user.container_tag });
 
   if (triage.type === "chat" || triage.type === "partial") {
     await appendConversationMessage(conversationId, "user", text);
-    await sendIMessage(conversationId, triage.reply, user.phone);
+    await sendUserMessage(conversationId, triage.reply, user.phone, replyFrom);
     await appendConversationMessage(conversationId, "assistant", triage.reply);
     return;
   }
@@ -577,114 +661,42 @@ export async function handleInboundIMessage(args: {
   await logMessage({ jobId: job.id, direction: "inbound", channel: "imessage", body: text });
   if (job.watch_token) {
     const watchUrl = buildWatchUrl(job.watch_token, env.PUBLIC_BASE_URL);
-    await sendIMessage(conversationId, watchUrl, user.phone);
+    await sendUserMessage(conversationId, watchUrl, user.phone, replyFrom);
     await logMessage({ jobId: job.id, direction: "outbound", channel: "imessage", body: watchUrl });
   }
-  runFullJob(job.id, user.container_tag).catch((e) => {
-    console.error("[orchestrator] runFullJob crashed", e);
+  runIntentAndResearch(job.id, user.container_tag).catch((e) => {
+    console.error("[orchestrator] runIntentAndResearch crashed", e);
   });
 }
 
-async function runFullJob(jobId: number, containerTag: string): Promise<void> {
-  const job0 = await getJob(jobId);
-  if (!job0) return;
-
-  await notify(job0, "on it — looking around for options rn");
-
-  // 1. Parse intent
-  const intent = await parseIntent(job0.intent_raw);
-  let budgetCents = intent.budgetCents ?? 10000;
-
-  // 1b. Budget calibration: adjust based on past spending patterns
-  const budgetInsight = await getBudgetInsight(containerTag, intent.service, budgetCents);
-  if (budgetInsight.adjustedBudgetCents !== budgetCents) {
-    budgetCents = budgetInsight.adjustedBudgetCents;
-  }
-
-  // 1c. Resolve location from memory if not specified
-  let location = intent.location;
-  if (!location || location === "unknown" || location === "not specified") {
-    const savedAddr = await getServiceAddress(containerTag);
-    if (savedAddr) {
-      location = savedAddr.address;
-    }
-  }
-
-  // 1d. Pull scheduling preferences
-  const schedPrefs = await getSchedulingPreferences(containerTag);
-  const timeframe = intent.timeframe || (schedPrefs.length ? schedPrefs[0] : "ASAP");
-
+async function applyParsedIntent(jobId: number, intent: Intent): Promise<void> {
   await updateJob(jobId, {
     service: intent.service,
-    location,
-    budget_cents: budgetCents,
-    timeframe,
-    status: "searching",
+    location: intent.location,
+    budget_cents: intent.budgetCents ?? 10000,
+    timeframe: intent.timeframe,
   });
+}
 
-  // Persist the request to memory
-  await addMemory(
-    containerTag,
-    `Requested ${intent.service} in ${location} with budget $${(budgetCents / 100).toFixed(0)}, timeframe ${timeframe}.`,
-    { type: "request", jobId },
-  );
-
-  const job = (await getJob(jobId))!;
-
-  // 1e. Send budget insight if available
-  if (budgetInsight.insight) {
-    await notify(job, budgetInsight.insight);
-  }
-
-  await notify(
-    job,
-    `${intent.service} in ${location}, ${timeframe} — searching now`,
-  );
-
-  // 2. Check provider loyalty — maybe we already have a preferred provider
-  const loyaltyCheck = await shouldSkipScraping(containerTag, intent.service);
-  if (loyaltyCheck.skip && loyaltyCheck.providers.length > 0) {
-    await notify(job, loyaltyCheck.suggestion ?? "you've used someone before — checking if they're available");
-
-    // Insert preferred providers as leads and call them first
-    for (const prov of loyaltyCheck.providers) {
-      await insertLead({
-        job_id: jobId,
-        name: prov.name,
-        phone: prov.phone ?? null,
-        email: prov.email ?? null,
-        address: null,
-        rating: null,
-        source_url: null,
-        rank_score: 15,
-        status: "pending",
-        quoted_price_cents: null,
-        payment_method: null,
-        notes: "returning provider from memory",
-      });
-    }
-  }
-
-  // 2b. Scrape new leads (always, to give options alongside loyalty picks)
+async function scrapeAndPersistLeads(args: {
+  jobId: number;
+  service: string;
+  location: string;
+  count: number;
+  specificProvider: string | null;
+}): Promise<Lead[]> {
+  const query = args.specificProvider
+    ? `${args.specificProvider} — ${args.service} in ${args.location}`
+    : args.service;
   const scraped = await scrapeLeads(
-    intent.service,
-    location,
-    loyaltyCheck.skip ? MAX_LEADS - loyaltyCheck.providers.length : MAX_LEADS,
-    createBrowserUseObserver(jobId, "Lead search", "lead_search"),
+    query,
+    args.location,
+    args.count,
+    createBrowserUseObserver(args.jobId, "Lead search", "lead_search"),
   );
-  if (!scraped.length && !loyaltyCheck.skip) {
-    await updateJob(jobId, { status: "failed" });
-    await notify(job, "couldn't find anyone for that — try rephrasing or a different area?");
-    return;
-  }
-
-  // 3. Pull user prefs from memory
-  await searchMemories(containerTag, `preferences for ${intent.service}`, 5);
-
-  // 4. Persist scraped leads
   for (const s of scraped) {
     await insertLead({
-      job_id: jobId,
+      job_id: args.jobId,
       name: s.name,
       phone: s.phone ?? null,
       email: s.email ?? null,
@@ -699,36 +711,29 @@ async function runFullJob(jobId: number, containerTag: string): Promise<void> {
     });
   }
 
-  // Fetch all leads (loyalty + scraped) and rank
-  let leads = await listLeads(jobId);
+  const leads = await listLeads(args.jobId);
   leads.sort((a, b) => (b.rank_score ?? 0) - (a.rank_score ?? 0));
+  return leads;
+}
 
-  // 4b. Apply memory-based ranking: boost/penalize/filter providers
-  leads = await applyMemoryToLeads(containerTag, leads, intent.service);
-
-  await updateJob(jobId, { status: "ranked" });
-  await notify(
-    job,
-    `found ${leads.length} options — top picks: ${leads
-      .slice(0, 3)
-      .map((l) => `${l.name}${l.rating ? ` (${l.rating}★)` : ""}`)
-      .join(", ")}`,
-  );
-
-  // 5. Enrich top N
-  const toEnrich = leads.slice(0, ENRICH_TOP_N);
+async function enrichTopLeads(args: {
+  jobId: number;
+  leads: Lead[];
+  service: string;
+  location: string;
+}): Promise<void> {
+  const toEnrich = args.leads.slice(0, ENRICH_TOP_N);
   const enrichments = await Promise.allSettled(
     toEnrich.map((lead) =>
       enrichLead({
         name: lead.name,
-        service: intent.service,
-        location: intent.location,
+        service: args.service,
+        location: args.location,
         sourceUrl: lead.source_url ?? undefined,
-        observer: createBrowserUseObserver(jobId, `Research ${lead.name}`, "enrichment"),
+        observer: createBrowserUseObserver(args.jobId, `Research ${lead.name}`, "enrichment"),
       }),
     ),
   );
-
   for (let i = 0; i < toEnrich.length; i++) {
     const lead = toEnrich[i];
     const r = enrichments[i];
@@ -747,26 +752,169 @@ async function runFullJob(jobId: number, containerTag: string): Promise<void> {
       Object.assign(lead, patch);
     }
   }
+}
 
-  await notify(job, "calling them now");
+// PHASE 1: parse intent, then either go straight to a specific provider
+// or do research and ask the user clarifying questions.
+async function runIntentAndResearch(jobId: number, containerTag: string): Promise<void> {
+  const job0 = await getJob(jobId);
+  if (!job0) return;
 
-  // 6. Parallel outbound calls (capped)
+  await notify(job0, "on it — thinking through what i need to ask first");
+
+  const intent = await parseIntent(job0.intent_raw);
+  const budgetCents = intent.budgetCents ?? 10000;
+  await applyParsedIntent(jobId, intent);
+  await addMemory(
+    containerTag,
+    `Requested ${intent.service} in ${intent.location} with budget $${(budgetCents / 100).toFixed(0)}, timeframe ${intent.timeframe}.`,
+    { type: "request", jobId },
+  );
+
+  // FAST PATH: user named a specific provider — skip research + approval,
+  // just look it up and call.
+  if (intent.specificProvider) {
+    await updateJob(jobId, { status: "searching" });
+    const job = (await getJob(jobId))!;
+    await notify(job, `looking up ${intent.specificProvider} now`);
+    await runLeadSearch(jobId, { specificProvider: intent.specificProvider });
+    const leads = await listLeads(jobId);
+    if (!leads.length) {
+      await updateJob(jobId, { status: "failed" });
+      await notify(job, `couldn't find ${intent.specificProvider} — got a phone number or website?`);
+      return;
+    }
+    await runCalls(jobId, containerTag);
+    return;
+  }
+
+  // GENERAL PATH: research the space, ask the user clarifying questions
+  // a real provider would ask before quoting.
+  await updateJob(jobId, { status: "researching" });
+  const research = await gatherResearch({
+    service: intent.service,
+    location: intent.location,
+  });
+  if (research.marketContext) {
+    await addMemory(
+      containerTag,
+      `Market context for ${intent.service}: ${research.marketContext}`,
+      { type: "market_context", jobId },
+    );
+  }
+  await updateJob(jobId, { status: "gathering_info" });
+  const job = (await getJob(jobId))!;
+  await notify(job, research.questionsMessage);
+  // Now we wait for the user to reply. handleInboundIMessage routes their
+  // next message into runLeadSearchAndApproval.
+}
+
+// PHASE 2: search for leads using the (now richer) intent, then present
+// the list to the user for approval before any calls go out.
+async function runLeadSearchAndApproval(jobId: number, containerTag: string): Promise<void> {
+  const job0 = await getJob(jobId);
+  if (!job0) return;
+
+  // Re-parse — intent_raw now includes the user's clarifying answers.
+  const intent = await parseIntent(job0.intent_raw);
+  await applyParsedIntent(jobId, intent);
+  await updateJob(jobId, { status: "searching" });
+  await searchMemories(containerTag, `preferences for ${intent.service}`, 5);
+
+  await runLeadSearch(jobId);
+  const job = (await getJob(jobId))!;
+  const leads = await listLeads(jobId);
+  if (!leads.length) {
+    await updateJob(jobId, { status: "failed" });
+    await notify(job, "couldn't find anyone for that — try rephrasing or a different area?");
+    return;
+  }
+
+  await updateJob(jobId, { status: "awaiting_approval" });
+  const top = leads.slice(0, 5);
+  const lines = top
+    .map((l, i) => {
+      const rating = l.rating ? ` ${l.rating}★` : "";
+      const phone = l.phone ? "" : " (no phone listed)";
+      return `${i + 1}. ${l.name}${rating}${phone}`;
+    })
+    .join("\n");
+  await notify(job, `here's who i'd call:\n${lines}\n\nsay go and i'll dial — or tell me what to change`);
+}
+
+async function runLeadSearch(
+  jobId: number,
+  opts: { specificProvider?: string } = {},
+): Promise<void> {
+  const job = await getJob(jobId);
+  if (!job) return;
+  const count = opts.specificProvider ? 1 : MAX_LEADS;
+  await scrapeAndPersistLeads({
+    jobId,
+    service: job.service ?? "",
+    location: job.location ?? "",
+    count,
+    specificProvider: opts.specificProvider ?? null,
+  });
+}
+
+// PHASE 3: enrich the top leads, then place outbound calls in parallel and
+// fall back to email for phone-less ones.
+async function runCalls(jobId: number, containerTag: string): Promise<void> {
+  const job0 = await getJob(jobId);
+  if (!job0) return;
+
+  const leads = await listLeads(jobId);
+  if (!leads.length) {
+    await updateJob(jobId, { status: "failed" });
+    await notify(job0, "no leads to call — want me to try again?");
+    return;
+  }
+
+  const intentService = job0.service ?? "";
+  const intentLocation = job0.location ?? "";
+  const intentTimeframe = job0.timeframe ?? "ASAP";
+  const budgetCents = job0.budget_cents ?? 10000;
+
+  await enrichTopLeads({
+    jobId,
+    leads,
+    service: intentService,
+    location: intentLocation,
+  });
+
   await updateJob(jobId, { status: "calling" });
+  const job = (await getJob(jobId))!;
+
   const calling = leads.filter((l) => l.phone).slice(0, MAX_PARALLEL_CALLS);
   const emailOnly = leads.filter((l) => !l.phone && l.email);
 
   await Promise.all(
     calling.map(async (lead) => {
-      const greeting = `Hi, this is Haggle calling about ${intent.service}.`;
+      const greeting = `Hi, this is Haggle calling about ${intentService}.`;
       await logMessage({
         jobId,
         direction: "outbound",
         channel: "system",
         body: `Issuing call to ${lead.name}${lead.phone ? ` at ${lead.phone}` : ""}.`,
       });
+      const past = await recallProviderHistory(containerTag, intentService, lead.name);
+      const ctx: NegotiationContext = {
+        jobId,
+        leadId: lead.id,
+        service: intentService || "service",
+        location: intentLocation,
+        budgetCents,
+        timeframe: intentTimeframe,
+        userPreferences: [],
+        pastProviderNotes: past.summary,
+        enrichmentNotes: lead.notes ?? undefined,
+        businessName: lead.name,
+      };
       const call = await createOutboundCall({
         toNumber: lead.phone!,
         initialGreeting: greeting,
+        systemPrompt: buildSystemPrompt(ctx),
         variables: { jobId: String(jobId), leadId: String(lead.id) },
       });
       if (call) {
@@ -786,7 +934,7 @@ async function runFullJob(jobId: number, containerTag: string): Promise<void> {
         job,
         lead,
         budgetCents,
-        timeframe: intent.timeframe,
+        timeframe: intentTimeframe,
       });
       await updateLead(lead.id, { status: ok ? "emailed" : "no_answer" });
     }
@@ -1118,10 +1266,11 @@ export async function releasePayment(jobId: number): Promise<void> {
     const priceCtx = user ? await buildPriceContext(user.container_tag, job.service ?? "service", escrow.amount_cents) : null;
     const priceNote = priceCtx ? `\n${priceCtx}` : "";
 
-    await sendIMessage(
+    await sendUserMessage(
       job.conversation_id,
       `done — $${amount.toFixed(0)} released to ${lead.name.toLowerCase()} via ${methodLabel}.${txInfo ? `\n${txInfo}` : ""}${priceNote}`,
       user?.phone,
+      user?.preferred_from_number ?? undefined,
     );
 
     if (user) {
@@ -1163,6 +1312,7 @@ export async function releasePayment(jobId: number): Promise<void> {
       job.conversation_id,
       `payment release failed — ${txInfo || "not sure why"}. want me to retry?`,
       user?.phone,
+      user?.preferred_from_number ?? undefined,
     );
   }
 }

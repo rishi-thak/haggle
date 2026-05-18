@@ -18,3 +18,25 @@ body {
 /* iMessage tail variants */
 .bubble-them { border-radius: 22px 22px 22px 6px; }
 .bubble-me   { border-radius: 22px 22px 6px 22px; }
+
+/* Subtle paper grain for the chat surface */
+.chat-canvas {
+  background-color: #FBFBFA;
+  background-image:
+    radial-gradient(1200px 600px at 50% -10%, rgba(255, 45, 45, 0.045), transparent 60%),
+    radial-gradient(800px 400px at 100% 100%, rgba(10, 10, 10, 0.025), transparent 60%);
+}
+
+/* Hide scrollbar but keep functionality on the chat scroll area */
+.chat-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(10, 10, 10, 0.15) transparent;
+}
+.chat-scroll::-webkit-scrollbar { width: 6px; }
+.chat-scroll::-webkit-scrollbar-thumb { background: rgba(10, 10, 10, 0.15); border-radius: 999px; }
+.chat-scroll::-webkit-scrollbar-track { background: transparent; }
+
+/* Safe-area aware composer padding for iOS */
+.composer-safe {
+  padding-bottom: max(env(safe-area-inset-bottom), 0px);
+}

@@ -9,6 +9,7 @@ type UserDoc = {
   phone: string;
   container_tag: string;
   sponge_wallet_address: string | null;
+  preferred_from_number?: string | null;
   created_at: number;
 };
 
@@ -150,6 +151,7 @@ function userRow(doc: UserDoc) {
     phone: doc.phone,
     container_tag: doc.container_tag,
     sponge_wallet_address: doc.sponge_wallet_address,
+    preferred_from_number: doc.preferred_from_number ?? null,
     created_at: doc.created_at,
   };
 }
@@ -327,10 +329,25 @@ export const getOrCreateUser = mutation({
       phone: args.phone,
       container_tag: `user_${args.phone.replace(/[^0-9]/g, "")}`,
       sponge_wallet_address: null,
+      preferred_from_number: null,
       created_at: t,
     };
     await ctx.db.insert("users", doc);
     return userRow(doc);
+  },
+});
+
+export const setUserPreferredFromNumber = mutation({
+  args: { phone: v.string(), fromNumber: nullableString },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("users")
+      .withIndex("by_phone", (q) => q.eq("phone", args.phone))
+      .unique();
+    if (!existing) return null;
+    if ((existing.preferred_from_number ?? null) === args.fromNumber) return null;
+    await ctx.db.patch(existing._id, { preferred_from_number: args.fromNumber });
+    return null;
   },
 });
 
@@ -405,6 +422,7 @@ export const updateJob = mutation({
       budget_cents: v.optional(nullableNumber),
       timeframe: v.optional(nullableString),
       winning_lead_id: v.optional(nullableNumber),
+      intent_raw: v.optional(v.string()),
     }),
   },
   handler: async (ctx, args) => {
@@ -962,6 +980,45 @@ export const appendConversationMessage = mutation({
   },
 });
 
+export const claimWebhookDelivery = mutation({
+  args: {
+    deliveryId: v.string(),
+    source: v.string(),
+    event: nullableString,
+  },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("webhook_deliveries")
+      .withIndex("by_delivery_id", (q) => q.eq("delivery_id", args.deliveryId))
+      .unique();
+    if (existing) return false;
+    await ctx.db.insert("webhook_deliveries", {
+      delivery_id: args.deliveryId,
+      source: args.source,
+      event: args.event,
+      created_at: now(),
+    });
+    return true;
+  },
+});
+
+export const appendWebChatMessage = mutation({
+  args: {
+    conversationId: v.string(),
+    direction: v.string(),
+    body: v.string(),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.insert("web_chat_messages", {
+      conversation_id: args.conversationId,
+      direction: args.direction,
+      body: args.body,
+      created_at: now(),
+    });
+    return null;
+  },
+});
+
 export const getRecentMessages = query({
   args: { conversationId: v.string() },
   handler: async (ctx, args) => {
@@ -1060,3 +1117,26 @@ export const updateEscrowPayment = mutation({
   },
 });
 
+
+export const listWebChatMessages = query({
+  args: {
+    conversationId: v.string(),
+    sinceMs: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const rows = await ctx.db
+      .query("web_chat_messages")
+      .withIndex("by_conversation_id", (q) => q.eq("conversation_id", args.conversationId))
+      .collect();
+    const filtered = args.sinceMs
+      ? rows.filter((r) => r.created_at > args.sinceMs!)
+      : rows;
+    return filtered
+      .sort((a, b) => a.created_at - b.created_at)
+      .map((r) => ({
+        direction: r.direction,
+        body: r.body,
+        created_at: r.created_at,
+      }));
+  },
+});

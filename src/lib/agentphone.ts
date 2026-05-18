@@ -14,6 +14,7 @@ export async function sendIMessage(
   _conversationId: string,
   text: string,
   toNumber?: string,
+  fromNumber?: string,
 ): Promise<void> {
   if (!env.AGENTPHONE_API_KEY) {
     console.warn("[agentphone] no api key, skipping send", { toNumber, text });
@@ -32,8 +33,9 @@ export async function sendIMessage(
     to_number: toNumber,
     body: text,
   };
-  if (env.AGENTPHONE_FROM_NUMBER) {
-    payload.from_number = env.AGENTPHONE_FROM_NUMBER;
+  const resolvedFrom = fromNumber ?? env.AGENTPHONE_FROM_NUMBER;
+  if (resolvedFrom) {
+    payload.from_number = resolvedFrom;
   }
   console.log("[agentphone] sendIMessage request", JSON.stringify(payload));
   const res = await fetch(`${BASE}/messages`, {
@@ -76,8 +78,12 @@ export async function createOutboundCall(p: CreateCallParams): Promise<CreateCal
     toNumber: p.toNumber,
     initialGreeting: p.initialGreeting,
   };
+  // The shared-imessage line can't place voice calls; pin outbound to the
+  // voice-capable number ID when configured.
+  if (env.AGENTPHONE_FROM_NUMBER_ID) body.fromNumberId = env.AGENTPHONE_FROM_NUMBER_ID;
   if (p.systemPrompt) body.systemPrompt = p.systemPrompt;
   if (p.variables) body.variables = p.variables;
+  console.log("[agentphone] createOutboundCall request", JSON.stringify(body));
   const res = await fetch(`${BASE}/calls`, {
     method: "POST",
     headers: authHeaders(),

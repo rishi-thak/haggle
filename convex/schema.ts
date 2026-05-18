@@ -15,6 +15,7 @@ export default defineSchema({
     phone: v.string(),
     container_tag: v.string(),
     sponge_wallet_address: nullableString,
+    preferred_from_number: v.optional(nullableString),
     created_at: v.number(),
   })
     .index("by_legacyId", ["legacyId"])
@@ -142,6 +143,20 @@ export default defineSchema({
     text: v.string(),
     created_at: v.number(),
   }).index("by_conversation", ["conversation_id", "created_at"]),
+
+  web_chat_messages: defineTable({
+    conversation_id: v.string(),
+    direction: v.string(),
+    body: v.string(),
+    created_at: v.number(),
+  }).index("by_conversation_id", ["conversation_id"]),
+
+  webhook_deliveries: defineTable({
+    delivery_id: v.string(),
+    source: v.string(),
+    event: nullableString,
+    created_at: v.number(),
+  }).index("by_delivery_id", ["delivery_id"]),
 
   email_threads: defineTable({
     legacyId: v.number(),

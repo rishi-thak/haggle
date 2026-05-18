@@ -33,6 +33,7 @@ function rowToUser(r: JsonRecord): User {
     phone: String(r.phone),
     container_tag: String(r.container_tag),
     sponge_wallet_address: r.sponge_wallet_address ? String(r.sponge_wallet_address) : null,
+    preferred_from_number: r.preferred_from_number ? String(r.preferred_from_number) : null,
     created_at: Number(r.created_at),
   };
 }
@@ -185,6 +186,16 @@ export async function getUserByConversation(conversationId: string): Promise<Use
   return row ? rowToUser(row as JsonRecord) : null;
 }
 
+export async function setUserPreferredFromNumber(
+  phone: string,
+  fromNumber: string | null,
+): Promise<void> {
+  await convexClient().mutation(api.repo.setUserPreferredFromNumber, {
+    phone,
+    fromNumber,
+  });
+}
+
 export async function getUserByPhone(phone: string): Promise<User | null> {
   const row = await convexClient().query(api.repo.getUserByPhone, { phone });
   return row ? rowToUser(row as JsonRecord) : null;
@@ -209,7 +220,18 @@ export async function createJob(args: {
 
 export async function updateJob(
   id: number,
-  patch: Partial<Pick<Job, "status" | "service" | "location" | "budget_cents" | "timeframe" | "winning_lead_id">>,
+  patch: Partial<
+    Pick<
+      Job,
+      | "status"
+      | "service"
+      | "location"
+      | "budget_cents"
+      | "timeframe"
+      | "winning_lead_id"
+      | "intent_raw"
+    >
+  >,
 ): Promise<void> {
   await convexClient().mutation(api.repo.updateJob, {
     id,
@@ -375,6 +397,45 @@ export async function markInboundEmailReceived(args: {
   threadId?: string | null;
 }): Promise<boolean> {
   return Boolean(await convexClient().mutation(api.repo.markInboundEmailReceived, args));
+}
+
+export async function claimWebhookDelivery(args: {
+  deliveryId: string;
+  source: string;
+  event: string | null;
+}): Promise<boolean> {
+  return Boolean(
+    await convexClient().mutation(api.repo.claimWebhookDelivery, args),
+  );
+}
+
+export async function appendWebChatMessage(args: {
+  conversationId: string;
+  direction: "inbound" | "outbound";
+  body: string;
+}): Promise<void> {
+  await convexClient().mutation(api.repo.appendWebChatMessage, args);
+}
+
+export interface WebChatMessage {
+  direction: "inbound" | "outbound";
+  body: string;
+  created_at: number;
+}
+
+export async function listWebChatMessages(
+  conversationId: string,
+  sinceMs?: number,
+): Promise<WebChatMessage[]> {
+  const rows = await convexClient().query(api.repo.listWebChatMessages, {
+    conversationId,
+    ...(sinceMs !== undefined ? { sinceMs } : {}),
+  });
+  return (rows as JsonRecord[]).map((r) => ({
+    direction: String(r.direction) as "inbound" | "outbound",
+    body: String(r.body),
+    created_at: Number(r.created_at),
+  }));
 }
 
 export async function findCallByAgentphoneId(
