@@ -1,7 +1,21 @@
 "use client";
 
+/* ─────────────────────────────────────────────────────────────────────────────
+ * /watch/[token] — the live "mission control" dashboard.
+ *
+ * Focal point: the multi-browser mosaic. Everything else collapses into a
+ * compact right rail with tabs (best / leads / activity), so the user can
+ * sort through info without scrolling forever.
+ *
+ * Click any browser tile to enter "focus mode" — that tile expands to fill
+ * the stage and the others shrink to a thumbnail strip alongside.
+ *
+ * Palette matches the chat page: paper bg, ink type, chunky black sticker
+ * shadows, red H sticker. Live tiles get a breathing red shadow.
+ * ───────────────────────────────────────────────────────── */
+
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import Image from "next/image";
 import type {
   BrowserSessionRow,
   CallRow,
@@ -25,33 +39,35 @@ type FeedItem = {
   tone: "browser" | "voice" | "imessage" | "email" | "system";
 };
 
+type RailTab = "best" | "leads" | "activity";
+
 const JOB_STATUS_LABELS: Record<string, string> = {
-  new: "New",
-  researching: "Researching",
-  gathering_info: "Gathering info",
-  searching: "Searching",
-  ranked: "Ranked",
-  awaiting_approval: "Awaiting approval",
-  calling: "Calling",
-  negotiating: "Negotiating",
-  awaiting_callback: "Awaiting callback",
-  email_fallback: "Email fallback",
-  awaiting_confirm: "Awaiting confirm",
-  paying: "Paying",
-  complete: "Complete",
-  failed: "Failed",
+  new: "new",
+  researching: "researching",
+  gathering_info: "gathering info",
+  searching: "searching",
+  ranked: "ranked",
+  awaiting_approval: "awaiting approval",
+  calling: "calling",
+  negotiating: "negotiating",
+  awaiting_callback: "awaiting callback",
+  email_fallback: "email fallback",
+  awaiting_confirm: "awaiting confirm",
+  paying: "paying",
+  complete: "complete",
+  failed: "failed",
 };
 
 const LEAD_STATUS_LABELS: Record<string, string> = {
-  pending: "Queued",
-  calling: "On call",
-  negotiating: "Negotiating",
-  agreed: "Agreed",
-  declined: "Declined",
-  no_answer: "No answer",
-  callback: "Callback",
-  ambiguous: "Unclear",
-  emailed: "Emailed",
+  pending: "queued",
+  calling: "on call",
+  negotiating: "negotiating",
+  agreed: "agreed",
+  declined: "declined",
+  no_answer: "no answer",
+  callback: "callback",
+  ambiguous: "unclear",
+  emailed: "emailed",
 };
 
 const ACTIVE_JOB_STATUSES = new Set([
@@ -67,6 +83,17 @@ const ACTIVE_JOB_STATUSES = new Set([
 ]);
 
 const TERMINAL_JOB_STATUSES = new Set(["complete", "failed"]);
+const DEAD_SESSION_STATUSES = new Set([
+  "complete",
+  "done",
+  "succeeded",
+  "finished",
+  "error",
+  "failed",
+  "stopped",
+]);
+
+/* ─── utils ────────────────────────────────────────────── */
 
 function formatTime(value: number): string {
   return new Intl.DateTimeFormat(undefined, {
@@ -85,8 +112,7 @@ function formatRelative(value: number, now: number): string {
   if (minutes < 60) return `${minutes}m ago`;
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
+  return `${Math.floor(hours / 24)}d ago`;
 }
 
 function formatElapsed(ms: number): string {
@@ -117,56 +143,36 @@ function feedTone(kind: string): FeedItem["tone"] {
 function toneClasses(tone: FeedItem["tone"]): string {
   switch (tone) {
     case "voice":
-      return "text-amber-300";
+      return "text-amber-600";
     case "imessage":
-      return "text-sky-300";
+      return "text-sky-600";
     case "email":
-      return "text-violet-300";
+      return "text-violet-600";
     case "system":
-      return "text-white/40";
+      return "text-ink-400";
     default:
-      return "text-haggle-400";
+      return "text-haggle-600";
   }
-}
-
-function jobStatusTone(status: string): {
-  dot: string;
-  ring: string;
-  label: string;
-} {
-  if (TERMINAL_JOB_STATUSES.has(status)) {
-    if (status === "complete")
-      return { dot: "bg-emerald-400", ring: "ring-emerald-400/40", label: "text-emerald-300" };
-    return { dot: "bg-haggle-500", ring: "ring-haggle-500/40", label: "text-haggle-400" };
-  }
-  if (ACTIVE_JOB_STATUSES.has(status))
-    return { dot: "bg-haggle-500", ring: "ring-haggle-500/30", label: "text-haggle-400" };
-  return { dot: "bg-white/30", ring: "ring-white/10", label: "text-white/55" };
 }
 
 function leadStatusTone(status: string): { dot: string; text: string } {
-  if (status === "agreed") return { dot: "bg-emerald-400", text: "text-emerald-300" };
+  if (status === "agreed") return { dot: "bg-emerald-500", text: "text-emerald-700" };
   if (["declined", "no_answer", "ambiguous"].includes(status))
-    return { dot: "bg-white/25", text: "text-white/45" };
+    return { dot: "bg-ink-200", text: "text-ink-400" };
   if (["calling", "negotiating", "callback", "emailed"].includes(status))
-    return { dot: "bg-haggle-500", text: "text-haggle-400" };
-  return { dot: "bg-white/30", text: "text-white/55" };
+    return { dot: "bg-haggle-500", text: "text-haggle-600" };
+  return { dot: "bg-ink-300", text: "text-ink-500" };
 }
 
-function sessionStatusTone(status: string): { dot: string; text: string; pulse: boolean } {
-  const s = status.toLowerCase();
-  if (["complete", "done", "succeeded", "finished"].includes(s))
-    return { dot: "bg-emerald-400", text: "text-emerald-300", pulse: false };
-  if (["error", "failed", "stopped"].includes(s))
-    return { dot: "bg-haggle-500", text: "text-haggle-400", pulse: false };
-  if (["idle", "paused"].includes(s))
-    return { dot: "bg-white/30", text: "text-white/55", pulse: false };
-  return { dot: "bg-haggle-500", text: "text-haggle-400", pulse: true };
+function sessionIsLive(session: BrowserSessionRow): boolean {
+  return !DEAD_SESSION_STATUSES.has(session.status.toLowerCase());
 }
 
 function leadContact(lead: Lead): string {
-  return lead.phone ?? lead.email ?? "No contact";
+  return lead.phone ?? lead.email ?? "no contact";
 }
+
+/* ─── hooks ────────────────────────────────────────────── */
 
 function useNow(intervalMs = 1000): number {
   const [now, setNow] = useState(() => Date.now());
@@ -250,61 +256,44 @@ function buildFeed(snapshot: WatchSnapshot): FeedItem[] {
     .slice(0, 80);
 }
 
+/* ─── root ─────────────────────────────────────────────── */
+
 export default function WatchDashboard({ token }: { token: string }) {
   const state = useWatchSnapshot(token);
   const snapshot = state.snapshot;
   const now = useNow(1000);
 
-  const [selectedSessionId, setSelectedSessionId] = useState<number | null>(null);
+  const [focusedSessionId, setFocusedSessionId] = useState<number | null>(null);
+  const [tab, setTab] = useState<RailTab>("best");
+
+  const sessions = snapshot?.browserSessions ?? [];
 
   useEffect(() => {
-    if (!snapshot?.browserSessions.length) return;
-    setSelectedSessionId((current) => {
-      if (
-        current &&
-        snapshot.browserSessions.some((session) => session.id === current)
-      )
-        return current;
-      return snapshot.browserSessions[0].id;
-    });
-  }, [snapshot]);
-
-  const selectedSession = useMemo(() => {
-    if (!snapshot) return null;
-    return (
-      snapshot.browserSessions.find((session) => session.id === selectedSessionId) ??
-      snapshot.browserSessions[0] ??
-      null
-    );
-  }, [selectedSessionId, snapshot]);
+    if (focusedSessionId && !sessions.some((s) => s.id === focusedSessionId)) {
+      setFocusedSessionId(null);
+    }
+  }, [sessions, focusedSessionId]);
 
   const feed = useMemo(() => (snapshot ? buildFeed(snapshot) : []), [snapshot]);
-  const liveUrl = selectedSession?.live_url
-    ? withLivePreviewParams(selectedSession.live_url, { theme: "dark" })
-    : null;
-
   const bestLead = useMemo(
     () => (snapshot ? computeBestLead(snapshot.leads) : null),
     [snapshot]
   );
 
   const elapsedMs = snapshot ? now - snapshot.job.created_at : 0;
-  const jobTone = jobStatusTone(snapshot?.job.status ?? "");
-  const isLive = !!snapshot && ACTIVE_JOB_STATUSES.has(snapshot.job.status);
-  const isTerminal = !!snapshot && TERMINAL_JOB_STATUSES.has(snapshot.job.status);
+  const jobStatus = snapshot?.job.status ?? "";
+  const isLive = !!snapshot && ACTIVE_JOB_STATUSES.has(jobStatus);
+  const isTerminal = !!snapshot && TERMINAL_JOB_STATUSES.has(jobStatus);
+
+  const liveCalls = (snapshot?.calls ?? []).filter((c) => c.ended_at === null);
+  const activeAgentCount = sessions.filter(sessionIsLive).length;
 
   return (
     <main
-      className="scheme-only-dark isolate min-h-dvh bg-[#0a0a0a] text-white antialiased"
+      className="chat-canvas grain relative isolate min-h-dvh text-ink-900 antialiased"
       style={{ fontFeatureSettings: "'ss01', 'cv11', 'cv02'" }}
     >
-      {/* Ambient backdrop — very subtle red wash at top, deep black canvas. */}
-      <div
-        aria-hidden
-        className="pointer-events-none fixed inset-0 -z-10 [background:radial-gradient(900px_500px_at_50%_-200px,rgba(255,45,45,0.12),transparent_70%),radial-gradient(700px_400px_at_100%_100%,rgba(255,255,255,0.025),transparent_60%)]"
-      />
-
-      <div className="mx-auto flex min-h-dvh w-full max-w-[1760px] flex-col">
+      <div className="relative z-10 mx-auto flex min-h-dvh w-full max-w-[1760px] flex-col">
         <TopBar
           job={snapshot?.job ?? null}
           elapsedMs={elapsedMs}
@@ -312,63 +301,61 @@ export default function WatchDashboard({ token }: { token: string }) {
           isTerminal={isTerminal}
           loading={state.status === "loading"}
           error={state.status === "error" ? state.error : null}
-          jobTone={jobTone}
+          agentCount={sessions.length}
+          activeAgentCount={activeAgentCount}
+          leadCount={snapshot?.leads.length ?? 0}
+          quoteCount={(snapshot?.leads ?? []).filter((l) => l.quoted_price_cents !== null).length}
+          liveCallCount={liveCalls.length}
         />
 
-        <VitalSigns
-          snapshot={snapshot}
-          elapsedMs={elapsedMs}
-          isLive={isLive}
-        />
-
-        <div className="grid min-h-0 flex-1 grid-cols-1 gap-px bg-white/[0.06] xl:grid-cols-[minmax(0,1fr)_420px]">
-          {/* LEFT — preview + activity */}
-          <section className="flex min-h-0 flex-col bg-[#0a0a0a]">
-            <AgentSwitcher
-              sessions={snapshot?.browserSessions ?? []}
-              selectedId={selectedSession?.id ?? null}
-              onSelect={setSelectedSessionId}
-            />
-
-            <PreviewStage
-              session={selectedSession}
-              liveUrl={liveUrl}
+        <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_400px]">
+          {/* MAIN STAGE — multi-browser mosaic (focal point) */}
+          <section className="flex min-h-0 flex-col border-b border-black/[0.06] lg:border-b-0 lg:border-r">
+            <BrowserMosaic
+              sessions={sessions}
+              focusedSessionId={focusedSessionId}
+              onFocus={setFocusedSessionId}
               loading={state.status === "loading"}
-              isLive={isLive}
             />
-
-            <ActivityTimeline feed={feed} now={now} />
           </section>
 
-          {/* RIGHT — quotes + leads + comms */}
-          <aside className="flex min-h-0 flex-col gap-px bg-white/[0.06] xl:bg-transparent">
-            <BestQuoteCard
-              bestLead={bestLead}
-              budgetCents={snapshot?.job.budget_cents ?? null}
-              isTerminal={isTerminal}
-            />
-            <LeadPipeline leads={snapshot?.leads ?? []} bestLeadId={bestLead?.id ?? null} />
-            <CallStrip calls={snapshot?.calls ?? []} leads={snapshot?.leads ?? []} now={now} />
-            <MessageStream messages={snapshot?.messages ?? []} />
+          {/* RIGHT RAIL — tabbed */}
+          <aside className="flex min-h-0 flex-col">
+            <RailTabs current={tab} onChange={setTab} />
+            <div className="chat-scroll min-h-0 flex-1 overflow-y-auto">
+              {tab === "best" && (
+                <BestTab
+                  bestLead={bestLead}
+                  budgetCents={snapshot?.job.budget_cents ?? null}
+                  isTerminal={isTerminal}
+                />
+              )}
+              {tab === "leads" && (
+                <LeadsTab
+                  leads={snapshot?.leads ?? []}
+                  bestLeadId={bestLead?.id ?? null}
+                />
+              )}
+              {tab === "activity" && <ActivityTab feed={feed} now={now} />}
+            </div>
           </aside>
         </div>
 
-        <footer className="border-t border-white/8 px-4 py-3 sm:px-6">
-          <div className="flex flex-wrap items-center justify-between gap-3 font-mono text-[10px] uppercase tracking-[0.18em] text-white/35">
-            <span>Haggle · Live Desk</span>
-            <span className="tabular-nums">
-              {state.status === "error"
-                ? `Reconnecting · ${state.error}`
-                : `Auto-refresh · 2s · ${formatTime(now)}`}
-            </span>
-          </div>
-        </footer>
+        {/* live call ticker — only when calls are open */}
+        {liveCalls.length > 0 && (
+          <CallTicker calls={liveCalls} leads={snapshot?.leads ?? []} now={now} />
+        )}
+
+        <Footer
+          now={now}
+          error={state.status === "error" ? state.error : null}
+        />
       </div>
     </main>
   );
 }
 
-/* ─── TOP BAR ─────────────────────────────────────────────── */
+/* ─── top bar ──────────────────────────────────────────── */
 
 function TopBar({
   job,
@@ -377,7 +364,11 @@ function TopBar({
   isTerminal,
   loading,
   error,
-  jobTone,
+  agentCount,
+  activeAgentCount,
+  leadCount,
+  quoteCount,
+  liveCallCount,
 }: {
   job: WatchSnapshot["job"] | null;
   elapsedMs: number;
@@ -385,82 +376,93 @@ function TopBar({
   isTerminal: boolean;
   loading: boolean;
   error: string | null;
-  jobTone: { dot: string; ring: string; label: string };
+  agentCount: number;
+  activeAgentCount: number;
+  leadCount: number;
+  quoteCount: number;
+  liveCallCount: number;
 }) {
-  const liveLabel = isLive ? "LIVE" : isTerminal ? "ENDED" : loading ? "TUNING IN" : "STANDBY";
-  const liveColor = isLive
-    ? "text-haggle-400"
+  const liveLabel = isLive
+    ? "live"
     : isTerminal
-    ? "text-white/45"
-    : "text-white/55";
+      ? "ended"
+      : loading
+        ? "tuning in"
+        : "standby";
 
   return (
-    <header className="sticky top-0 z-20 border-b border-white/8 bg-[#0a0a0a]/85 px-4 backdrop-blur-md sm:px-6">
-      <div className="flex flex-col gap-4 py-4 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2.5">
-            <span className="relative flex size-2.5 items-center justify-center">
-              {isLive && (
-                <span className="absolute inset-0 animate-pulse-ring rounded-full bg-haggle-500/70" />
-              )}
-              <span className={`size-2.5 rounded-full ${isLive ? "bg-haggle-500" : "bg-white/30"}`} />
+    <header className="sticky top-0 z-20 border-b border-black/[0.06] bg-paper/85 backdrop-blur-xl">
+      <div className="flex flex-col gap-3 px-4 py-3 sm:px-6 lg:flex-row lg:items-center lg:gap-6">
+        {/* left: home logo + live pill */}
+        <div className="flex items-center gap-3">
+          <a
+            href="/"
+            aria-label="back to home"
+            className="group inline-flex shrink-0 items-center gap-2.5"
+          >
+            <div className="relative size-8 transition-transform group-hover:-rotate-6">
+              <Image src="/Haggle2.png" alt="" fill className="object-contain" />
+            </div>
+            <span className="hidden font-display text-[15px] font-bold tracking-tight sm:block">
+              haggle
             </span>
-            <span className={`font-mono text-[11px] font-medium uppercase tracking-[0.22em] ${liveColor}`}>
-              {liveLabel}
-            </span>
-          </div>
-
-          <div className="hidden h-5 w-px bg-white/10 lg:block" />
-
-          <div className="flex items-center gap-2.5">
-            <span className="font-display text-[15px] font-bold tracking-tight">haggle</span>
-            <span className="font-mono text-[10px] uppercase tracking-[0.22em] text-white/35">
+            <span className="hidden font-mono text-[10px] uppercase tracking-[0.22em] text-ink-400 sm:block">
               live desk
             </span>
-          </div>
+          </a>
+          <div className="hidden h-5 w-px bg-black/[0.08] lg:block" />
+          <LivePill label={liveLabel} active={isLive} />
         </div>
 
-        <div className="flex min-w-0 flex-1 flex-col gap-1 lg:items-center lg:text-center">
-          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 lg:justify-center">
+        {/* middle: the request */}
+        <div className="min-w-0 flex-1 lg:text-center">
+          <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5 lg:justify-center">
             <h1
-              className="truncate font-display text-2xl font-black tracking-tight text-balance sm:text-3xl"
+              className="truncate font-display text-[22px] font-black tracking-tight text-balance sm:text-[26px]"
               style={{ fontVariationSettings: "'opsz' 144, 'SOFT' 50" }}
             >
-              {job?.service ?? (loading ? "Tuning in…" : "Waiting for request")}
+              {job?.service ?? (loading ? "tuning in…" : "waiting for request")}
             </h1>
             {job?.location && (
-              <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-white/45">
+              <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-ink-400">
                 in {job.location}
               </span>
             )}
           </div>
-          {job?.timeframe && (
-            <div className="truncate text-sm text-white/50 lg:text-center">
-              {job.timeframe}
-              {job.budget_cents !== null && (
-                <>
-                  <span className="mx-2 text-white/20">·</span>
-                  budget {formatMoney(job.budget_cents)}
-                </>
+          {(job?.timeframe || job?.budget_cents !== null) && (
+            <p className="truncate text-[12px] text-ink-500 lg:text-center">
+              {job?.timeframe}
+              {job?.timeframe && job?.budget_cents !== null && (
+                <span className="mx-1.5 text-ink-300">·</span>
               )}
-            </div>
+              {job?.budget_cents !== null && (
+                <>budget {formatMoney(job?.budget_cents)}</>
+              )}
+            </p>
           )}
         </div>
 
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2 rounded-full bg-white/[0.04] px-3 py-1.5 ring-1 ring-inset ring-white/8">
-            <span className={`size-2 rounded-full ${jobTone.dot} ${isLive ? "animate-ping-dot" : ""}`} />
-            <span className={`font-mono text-[10px] font-medium uppercase tracking-[0.16em] ${jobTone.label}`}>
-              {JOB_STATUS_LABELS[job?.status ?? ""] ?? (loading ? "Loading" : "—")}
-            </span>
-          </div>
-          <div className="rounded-full bg-white/[0.04] px-3 py-1.5 font-mono text-[12px] tabular-nums tracking-[0.08em] text-white/72 ring-1 ring-inset ring-white/8">
-            {job ? formatElapsed(elapsedMs) : "00:00"}
-          </div>
+        {/* right: vitals inline */}
+        <div className="flex flex-wrap items-center gap-1.5 lg:flex-nowrap">
+          <Stat label="elapsed" value={job ? formatElapsed(elapsedMs) : "00:00"} tabular />
+          <Stat
+            label="agents"
+            value={String(agentCount)}
+            accent={activeAgentCount > 0}
+            sub={activeAgentCount > 0 ? `${activeAgentCount} live` : undefined}
+          />
+          <Stat
+            label="leads"
+            value={String(leadCount)}
+            sub={quoteCount > 0 ? `${quoteCount} quoted` : undefined}
+          />
+          {liveCallCount > 0 && (
+            <Stat label="on line" value={String(liveCallCount)} accent />
+          )}
           {error && (
-            <div className="hidden font-mono text-[10px] uppercase tracking-[0.16em] text-amber-300 lg:block">
+            <span className="hidden font-mono text-[10px] uppercase tracking-[0.16em] text-amber-700 lg:inline">
               reconnecting
-            </div>
+            </span>
           )}
         </div>
       </div>
@@ -468,142 +470,413 @@ function TopBar({
   );
 }
 
-/* ─── VITAL SIGNS ─────────────────────────────────────────── */
-
-function VitalSigns({
-  snapshot,
-  elapsedMs,
-  isLive,
-}: {
-  snapshot: WatchSnapshot | null;
-  elapsedMs: number;
-  isLive: boolean;
-}) {
-  const browsersActive = (snapshot?.browserSessions ?? []).filter(
-    (s) => !["complete", "done", "succeeded", "finished", "error", "failed", "stopped"].includes(s.status.toLowerCase())
-  ).length;
-  const callsOpen = (snapshot?.calls ?? []).filter((c) => c.ended_at === null).length;
-  const quotesIn = (snapshot?.leads ?? []).filter((l) => l.quoted_price_cents !== null).length;
-
+function LivePill({ label, active }: { label: string; active: boolean }) {
   return (
-    <div className="grid grid-cols-2 gap-px border-b border-white/8 bg-white/[0.06] sm:grid-cols-4">
-      <Vital label="Elapsed" value={snapshot ? formatElapsed(elapsedMs) : "—"} tone="default" />
-      <Vital
-        label="Agents working"
-        value={String(snapshot?.browserSessions.length ?? 0)}
-        sub={browsersActive > 0 ? `${browsersActive} live` : "idle"}
-        tone={browsersActive > 0 ? "live" : "default"}
-      />
-      <Vital
-        label="Leads found"
-        value={String(snapshot?.leads.length ?? 0)}
-        sub={quotesIn > 0 ? `${quotesIn} quoted` : "searching"}
-        tone="default"
-      />
-      <Vital
-        label="Calls placed"
-        value={String(snapshot?.calls.length ?? 0)}
-        sub={callsOpen > 0 ? `${callsOpen} on line` : isLive ? "queued" : "—"}
-        tone={callsOpen > 0 ? "live" : "default"}
-      />
-    </div>
+    <span className="inline-flex items-center gap-2 rounded-full bg-white px-2.5 py-1 sticker-2">
+      <span className="relative inline-flex size-2 items-center justify-center">
+        {active && (
+          <span className="absolute inset-0 animate-pulse-ring rounded-full bg-haggle-500/70" />
+        )}
+        <span
+          className={`size-2 rounded-full ${active ? "bg-haggle-500" : "bg-ink-300"}`}
+        />
+      </span>
+      <span
+        className={`font-mono text-[10px] font-semibold uppercase tracking-[0.2em] ${
+          active ? "text-haggle-600" : "text-ink-500"
+        }`}
+      >
+        {label}
+      </span>
+    </span>
   );
 }
 
-function Vital({
+function Stat({
   label,
   value,
   sub,
-  tone,
+  accent,
+  tabular,
 }: {
   label: string;
   value: string;
   sub?: string;
-  tone: "live" | "default";
+  accent?: boolean;
+  tabular?: boolean;
 }) {
   return (
-    <div className="relative flex flex-col gap-2 bg-[#0a0a0a] px-4 py-5 sm:px-6">
-      <div className="flex items-center gap-2">
-        <span className="truncate font-mono text-[10px] font-medium uppercase tracking-[0.18em] text-white/35">
-          {label}
-        </span>
-        {tone === "live" && <span className="size-1.5 animate-ping-dot rounded-full bg-haggle-500" />}
-      </div>
-      <div
-        className="font-display text-[2.25rem] font-black leading-none tracking-tight tabular-nums sm:text-[2.75rem]"
-        style={{ fontVariationSettings: "'opsz' 144, 'SOFT' 30" }}
+    <div
+      className={[
+        "flex items-baseline gap-1.5 rounded-md px-2.5 py-1 ring-1 ring-inset",
+        accent
+          ? "bg-haggle-500/10 ring-haggle-500/30"
+          : "bg-white ring-black/[0.06]",
+      ].join(" ")}
+    >
+      <span
+        className={[
+          "font-mono text-[9px] uppercase tracking-[0.16em]",
+          accent ? "text-haggle-600" : "text-ink-400",
+        ].join(" ")}
+      >
+        {label}
+      </span>
+      <span
+        className={[
+          "text-[13px] font-semibold",
+          tabular ? "tabular-nums" : "",
+          accent ? "text-haggle-700" : "text-ink-900",
+        ].join(" ")}
       >
         {value}
-      </div>
+      </span>
       {sub && (
-        <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-white/40">{sub}</div>
+        <span className="hidden font-mono text-[9px] uppercase tracking-[0.14em] text-ink-400 sm:inline">
+          · {sub}
+        </span>
       )}
     </div>
   );
 }
 
-/* ─── AGENT SWITCHER ──────────────────────────────────────── */
+/* ─── browser mosaic ──────────────────────────────────── */
 
-function AgentSwitcher({
+function BrowserMosaic({
   sessions,
-  selectedId,
-  onSelect,
+  focusedSessionId,
+  onFocus,
+  loading,
 }: {
   sessions: BrowserSessionRow[];
-  selectedId: number | null;
-  onSelect: (id: number) => void;
+  focusedSessionId: number | null;
+  onFocus: (id: number | null) => void;
+  loading: boolean;
 }) {
-  if (!sessions.length) {
+  if (sessions.length === 0) {
     return (
-      <div className="flex items-center justify-between gap-4 border-b border-white/8 px-4 py-3 sm:px-6">
-        <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-white/35">
-          Browser agents
-        </div>
-        <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-white/30">
-          spinning up
+      <div className="flex flex-1 items-center justify-center p-6">
+        <EmptyMosaic loading={loading} />
+      </div>
+    );
+  }
+
+  const focused = focusedSessionId
+    ? sessions.find((s) => s.id === focusedSessionId)
+    : null;
+
+  if (focused) {
+    const others = sessions.filter((s) => s.id !== focused.id);
+    return (
+      <div className="flex min-h-0 flex-1 flex-col">
+        <MosaicHeader
+          count={sessions.length}
+          focused={focused}
+          onExit={() => onFocus(null)}
+        />
+        <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto] gap-4 p-4 sm:p-5">
+          <BrowserTile
+            session={focused}
+            variant="hero"
+            onClick={() => onFocus(null)}
+          />
+          {others.length > 0 && (
+            <div className="chat-scroll flex gap-3 overflow-x-auto pb-2 pt-1">
+              {others.map((s) => (
+                <BrowserTile
+                  key={s.id}
+                  session={s}
+                  variant="strip"
+                  onClick={() => onFocus(s.id)}
+                />
+              ))}
+            </div>
+          )}
         </div>
       </div>
     );
   }
 
+  // grid layout, adaptive by count
+  const gridCols =
+    sessions.length === 1
+      ? "grid-cols-1"
+      : sessions.length === 2
+        ? "grid-cols-1 sm:grid-cols-2"
+        : "grid-cols-1 sm:grid-cols-2";
+
   return (
-    <div className="flex items-stretch gap-px border-b border-white/8 bg-white/[0.06] overflow-x-auto">
-      {sessions.map((session) => {
-        const tone = sessionStatusTone(session.status);
-        const active = session.id === selectedId;
+    <div className="flex min-h-0 flex-1 flex-col">
+      <MosaicHeader count={sessions.length} />
+      <div className={`grid min-h-0 flex-1 gap-4 p-4 sm:p-5 ${gridCols}`}>
+        {sessions.map((s) => (
+          <BrowserTile
+            key={s.id}
+            session={s}
+            variant="grid"
+            onClick={() => onFocus(s.id)}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function MosaicHeader({
+  count,
+  focused,
+  onExit,
+}: {
+  count: number;
+  focused?: BrowserSessionRow;
+  onExit?: () => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 border-b border-black/[0.06] bg-paper/60 px-4 py-2.5 sm:px-6">
+      <div className="flex min-w-0 items-center gap-3">
+        <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-ink-400">
+          · browser swarm
+        </div>
+        <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-300 tabular-nums">
+          {count} {count === 1 ? "agent" : "agents"}
+        </span>
+        {focused && (
+          <span className="hidden truncate text-[12px] text-ink-500 sm:inline">
+            <span className="text-ink-300">focused on</span> {focused.label || `agent ${focused.id}`}
+          </span>
+        )}
+      </div>
+      {focused && onExit && (
+        <button
+          type="button"
+          onClick={onExit}
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-white px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.14em] text-ink-700 sticker-2 transition hover:text-ink-900"
+        >
+          <BackIcon className="size-3" />
+          back to grid
+        </button>
+      )}
+    </div>
+  );
+}
+
+function BrowserTile({
+  session,
+  variant,
+  onClick,
+}: {
+  session: BrowserSessionRow;
+  variant: "hero" | "grid" | "strip";
+  onClick: () => void;
+}) {
+  const live = sessionIsLive(session);
+  const liveUrl = session.live_url
+    ? withLivePreviewParams(session.live_url, { theme: "light" })
+    : null;
+
+  if (variant === "strip") {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        className={[
+          "group relative aspect-video h-28 shrink-0 overflow-hidden rounded-lg bg-ink-100 text-left",
+          live ? "live-tile" : "sticker-2",
+        ].join(" ")}
+        aria-label={`focus ${session.label || `agent ${session.id}`}`}
+      >
+        {liveUrl ? (
+          <iframe
+            key={liveUrl}
+            title={session.label}
+            src={liveUrl}
+            allow="autoplay"
+            className="pointer-events-none absolute inset-0 h-full w-full border-0"
+          />
+        ) : (
+          <div className="absolute inset-0 flex items-center justify-center bg-ink-100">
+            <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-ink-400">
+              {live ? "warming…" : session.status}
+            </span>
+          </div>
+        )}
+        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent px-2 py-1.5">
+          <div className="flex items-center gap-1.5">
+            <SessionDot live={live} onDark />
+            <span className="truncate text-[10px] font-medium text-white">
+              {session.label || `agent ${session.id}`}
+            </span>
+          </div>
+        </div>
+      </button>
+    );
+  }
+
+  const isHero = variant === "hero";
+  return (
+    <div
+      className={[
+        "relative flex min-h-0 flex-col overflow-hidden rounded-2xl bg-white",
+        live ? "live-tile" : "sticker-3",
+      ].join(" ")}
+    >
+      {/* tile chrome */}
+      <div className="flex items-center gap-3 border-b border-black/[0.06] bg-white px-3 py-2">
+        <div className="flex items-center gap-1.5">
+          <SessionDot live={live} />
+          <span className="truncate text-[12px] font-semibold text-ink-900">
+            {session.label || `agent ${session.id}`}
+          </span>
+        </div>
+        <div className="flex min-w-0 flex-1 items-center gap-2 rounded-md bg-ink-50 px-2.5 py-1 ring-1 ring-inset ring-black/[0.04]">
+          <span className="truncate font-mono text-[10px] tracking-wide text-ink-500">
+            browser-use://{session.phase || "standby"}
+          </span>
+        </div>
+        <span className="shrink-0 font-mono text-[10px] uppercase tracking-[0.14em] text-ink-400 tabular-nums">
+          step {session.step_count}
+        </span>
+        {!isHero && (
+          <button
+            type="button"
+            onClick={onClick}
+            className="shrink-0 rounded-md bg-ink-50 p-1.5 text-ink-500 transition hover:bg-haggle-500/10 hover:text-haggle-600"
+            aria-label="focus this agent"
+            title="focus this agent"
+          >
+            <ExpandIcon className="size-3.5" />
+          </button>
+        )}
+      </div>
+
+      {/* viewport */}
+      <div className={`relative ${isHero ? "flex-1" : "aspect-video"} bg-ink-100`}>
+        {liveUrl ? (
+          <>
+            <iframe
+              key={liveUrl}
+              title={`${session.label} live preview`}
+              src={liveUrl}
+              allow="autoplay"
+              className="absolute inset-0 h-full w-full animate-fade-in border-0"
+            />
+            {/* click-shield for grid mode so the iframe doesn't steal clicks meant for focusing */}
+            {!isHero && (
+              <button
+                type="button"
+                onClick={onClick}
+                className="absolute inset-0 bg-transparent transition hover:bg-haggle-500/5"
+                aria-label={`focus ${session.label}`}
+              />
+            )}
+          </>
+        ) : (
+          <button
+            type="button"
+            onClick={onClick}
+            className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-ink-100 text-center"
+          >
+            <div className="relative inline-flex size-10 items-center justify-center">
+              <span className="absolute inset-0 animate-pulse-ring rounded-full bg-haggle-500/40" />
+              <span className="size-1.5 animate-ping-dot rounded-full bg-haggle-500" />
+            </div>
+            <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-ink-400">
+              {live ? "warming up" : session.status}
+            </span>
+          </button>
+        )}
+      </div>
+
+      {/* bottom strip: last step */}
+      <div className="flex items-center justify-between gap-3 border-t border-black/[0.06] bg-white px-3 py-2">
+        <p className="min-w-0 truncate text-[12px] text-ink-600 text-pretty">
+          {session.error ?? session.last_step_summary ?? "awaiting next step…"}
+        </p>
+        {session.error && (
+          <span className="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.14em] text-amber-700 ring-1 ring-inset ring-amber-500/30">
+            error
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SessionDot({ live, onDark }: { live: boolean; onDark?: boolean }) {
+  return (
+    <span className="relative inline-flex size-2 shrink-0 items-center justify-center">
+      {live && (
+        <span className="absolute inset-0 animate-pulse-ring rounded-full bg-haggle-500/60" />
+      )}
+      <span
+        className={`size-1.5 rounded-full ${
+          live ? "bg-haggle-500" : onDark ? "bg-white/50" : "bg-ink-300"
+        }`}
+      />
+    </span>
+  );
+}
+
+function EmptyMosaic({ loading }: { loading: boolean }) {
+  return (
+    <div className="max-w-sm text-center animate-fade-in">
+      <div className="relative mx-auto size-24 animate-tilt-in">
+        <Image
+          src="/Haggle2.png"
+          alt="haggle"
+          fill
+          priority
+          className="object-contain drop-shadow-[5px_5px_0_rgba(10,10,10,0.18)]"
+        />
+      </div>
+      <h2
+        className="mt-6 font-display text-[22px] font-black tracking-tight text-balance"
+        style={{ fontVariationSettings: "'opsz' 144, 'SOFT' 50" }}
+      >
+        {loading ? "opening live desk" : "waiting for the first agent"}
+      </h2>
+      <p className="mt-2 text-[13px] leading-relaxed text-ink-500 text-pretty">
+        agents are negotiating their way to the right provider. their browsers
+        stream here in real time.
+      </p>
+    </div>
+  );
+}
+
+/* ─── right rail: tabs ─────────────────────────────────── */
+
+function RailTabs({
+  current,
+  onChange,
+}: {
+  current: RailTab;
+  onChange: (t: RailTab) => void;
+}) {
+  const tabs: { id: RailTab; label: string }[] = [
+    { id: "best", label: "best quote" },
+    { id: "leads", label: "leads" },
+    { id: "activity", label: "activity" },
+  ];
+  return (
+    <div className="flex shrink-0 items-stretch border-b border-black/[0.06] bg-paper/60">
+      {tabs.map((t) => {
+        const active = current === t.id;
         return (
           <button
-            key={session.id}
+            key={t.id}
             type="button"
-            onClick={() => onSelect(session.id)}
+            onClick={() => onChange(t.id)}
             className={[
-              "group relative flex min-w-[220px] flex-col gap-1.5 px-4 py-3 text-left transition outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-haggle-500",
+              "relative flex-1 px-3 py-3 font-mono text-[10px] font-semibold uppercase tracking-[0.16em] transition",
               active
-                ? "bg-[#141414]"
-                : "bg-[#0a0a0a] hover:bg-[#0f0f0f]",
+                ? "text-ink-900"
+                : "text-ink-400 hover:bg-white/40 hover:text-ink-700",
             ].join(" ")}
           >
+            {t.label}
             {active && (
-              <span className="pointer-events-none absolute inset-x-0 top-0 h-px bg-haggle-500" />
+              <span className="absolute inset-x-2 bottom-0 h-[2px] rounded-full bg-haggle-500" />
             )}
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex min-w-0 items-center gap-2">
-                <span
-                  className={`size-1.5 shrink-0 rounded-full ${tone.dot} ${tone.pulse ? "animate-ping-dot" : ""}`}
-                />
-                <span
-                  className={`truncate text-[13px] font-medium ${active ? "text-white" : "text-white/72"}`}
-                >
-                  {session.label || `Agent ${session.id}`}
-                </span>
-              </div>
-              <span className="shrink-0 font-mono text-[10px] uppercase tracking-[0.14em] text-white/35 tabular-nums">
-                step {session.step_count}
-              </span>
-            </div>
-            <div className="line-clamp-1 text-[11px] leading-relaxed text-white/45">
-              {session.error ?? session.last_step_summary ?? session.phase ?? "waiting"}
-            </div>
           </button>
         );
       })}
@@ -611,165 +884,9 @@ function AgentSwitcher({
   );
 }
 
-/* ─── PREVIEW STAGE ───────────────────────────────────────── */
+/* ─── tab: best quote ──────────────────────────────────── */
 
-function PreviewStage({
-  session,
-  liveUrl,
-  loading,
-  isLive,
-}: {
-  session: BrowserSessionRow | null;
-  liveUrl: string | null;
-  loading: boolean;
-  isLive: boolean;
-}) {
-  return (
-    <div className="relative flex min-h-[58vh] flex-1 flex-col bg-black">
-      {/* Chrome bar — minimal, fake browser strip */}
-      <div className="flex items-center gap-3 border-b border-white/8 bg-[#0a0a0a] px-4 py-2.5 sm:px-6">
-        <div className="flex items-center gap-1.5">
-          <span className="size-2.5 rounded-full bg-white/12" />
-          <span className="size-2.5 rounded-full bg-white/12" />
-          <span className="size-2.5 rounded-full bg-white/12" />
-        </div>
-        <div className="flex min-w-0 flex-1 items-center gap-2 rounded-md bg-white/[0.05] px-3 py-1 ring-1 ring-inset ring-white/8">
-          {isLive && (
-            <span className="size-1.5 shrink-0 animate-ping-dot rounded-full bg-haggle-500" />
-          )}
-          <span className="truncate font-mono text-[11px] tracking-wide text-white/55">
-            {session?.phase
-              ? `browser-use://${session.phase}`
-              : "browser-use://standby"}
-          </span>
-        </div>
-        {session && (
-          <span className="hidden shrink-0 font-mono text-[10px] uppercase tracking-[0.18em] text-white/40 sm:block tabular-nums">
-            session #{session.id}
-          </span>
-        )}
-      </div>
-
-      {/* Viewport */}
-      <div className="relative flex-1 bg-black">
-        {liveUrl ? (
-          <>
-            <iframe
-              key={liveUrl}
-              title="Browser Use live preview"
-              src={liveUrl}
-              allow="autoplay"
-              className="absolute inset-0 h-full w-full animate-fade-in border-0"
-            />
-            {/* Subtle vignette — keeps eye on action */}
-            <div
-              aria-hidden
-              className="pointer-events-none absolute inset-0 [background:radial-gradient(ellipse_at_center,transparent_55%,rgba(0,0,0,0.55)_100%)]"
-            />
-          </>
-        ) : (
-          <EmptyPreview loading={loading} hasSession={!!session} />
-        )}
-      </div>
-
-      {/* Bottom strip — session pulse */}
-      {session && (
-        <div className="flex items-center justify-between gap-4 border-t border-white/8 bg-[#0a0a0a] px-4 py-2.5 sm:px-6">
-          <div className="min-w-0 truncate text-[12px] text-white/55 text-pretty">
-            {session.last_step_summary ?? "Awaiting next step…"}
-          </div>
-          <div className="shrink-0 font-mono text-[10px] uppercase tracking-[0.16em] text-white/40 tabular-nums">
-            {session.step_count} steps
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function EmptyPreview({ loading, hasSession }: { loading: boolean; hasSession: boolean }) {
-  return (
-    <div className="flex h-full min-h-[58vh] items-center justify-center px-6 text-center">
-      <div className="max-w-sm">
-        <div className="relative mx-auto mb-6 flex size-16 items-center justify-center">
-          <span className="absolute inset-0 animate-pulse-ring rounded-full bg-haggle-500/40" />
-          <span className="absolute inset-2 rounded-full bg-haggle-500/10 ring-1 ring-inset ring-haggle-500/30" />
-          <span className="relative size-2 animate-ping-dot rounded-full bg-haggle-500" />
-        </div>
-        <h2
-          className="font-display text-2xl font-black tracking-tight text-balance"
-          style={{ fontVariationSettings: "'opsz' 144, 'SOFT' 50" }}
-        >
-          {loading
-            ? "Opening live desk"
-            : hasSession
-            ? "Browser warming up"
-            : "Waiting for the first agent"}
-        </h2>
-        <p className="mt-3 text-sm leading-relaxed text-white/45 text-pretty">
-          {hasSession
-            ? "The live preview appears as soon as Browser Use returns a URL for this session."
-            : "Agents are negotiating their way to the right provider. Their browsers will stream here in real time."}
-        </p>
-      </div>
-    </div>
-  );
-}
-
-/* ─── ACTIVITY TIMELINE ───────────────────────────────────── */
-
-function ActivityTimeline({ feed, now }: { feed: FeedItem[]; now: number }) {
-  const seenRef = useRef<Set<string>>(new Set());
-  useEffect(() => {
-    for (const item of feed) seenRef.current.add(item.id);
-  }, [feed]);
-
-  return (
-    <section className="flex max-h-[40vh] min-h-[260px] flex-col border-t border-white/8 xl:max-h-[36vh]">
-      <div className="flex items-center justify-between gap-3 border-b border-white/8 px-4 py-2.5 sm:px-6">
-        <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-white/35">
-          Activity stream
-        </div>
-        <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-white/30 tabular-nums">
-          {feed.length} events
-        </div>
-      </div>
-      <div className="chat-scroll relative flex-1 overflow-y-auto">
-        {feed.length === 0 ? (
-          <EmptyLine text="Events will appear here as agents work." />
-        ) : (
-          <ol role="list" className="divide-y divide-white/[0.04]">
-            {feed.map((item) => {
-              const isNew = !seenRef.current.has(item.id);
-              return (
-                <li
-                  key={item.id}
-                  className={`grid grid-cols-[80px_minmax(0,1fr)] gap-3 px-4 py-3 sm:px-6 ${isNew ? "animate-fade-in" : ""}`}
-                >
-                  <div className="pt-px font-mono text-[10px] uppercase tracking-[0.14em] text-white/30 tabular-nums">
-                    {formatRelative(item.createdAt, now)}
-                  </div>
-                  <div className="min-w-0">
-                    <div className={`font-mono text-[10px] font-medium uppercase tracking-[0.14em] ${toneClasses(item.tone)}`}>
-                      {item.kind}
-                    </div>
-                    <p className="mt-1 text-[13px] leading-relaxed text-white/75 text-pretty">
-                      {item.text}
-                    </p>
-                  </div>
-                </li>
-              );
-            })}
-          </ol>
-        )}
-      </div>
-    </section>
-  );
-}
-
-/* ─── BEST QUOTE ──────────────────────────────────────────── */
-
-function BestQuoteCard({
+function BestTab({
   bestLead,
   budgetCents,
   isTerminal,
@@ -786,79 +903,82 @@ function BestQuoteCard({
   const agreed = bestLead?.status === "agreed";
 
   return (
-    <section className="relative bg-[#0a0a0a] px-4 py-6 sm:px-6">
+    <div className="px-5 py-5">
       <div className="flex items-center justify-between gap-3">
-        <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-white/35">
-          Best quote
-        </div>
-        {agreed && (
-          <span className="rounded-full bg-emerald-500/12 px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.16em] text-emerald-300 ring-1 ring-inset ring-emerald-400/30">
-            Agreed
+        <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-ink-400">
+          · best quote
+        </span>
+        {agreed ? (
+          <span className="rounded-full bg-emerald-500/12 px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.16em] text-emerald-700 ring-1 ring-inset ring-emerald-500/30">
+            agreed
           </span>
-        )}
-        {!agreed && hasQuote && (
-          <span className="rounded-full bg-haggle-500/10 px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.16em] text-haggle-400 ring-1 ring-inset ring-haggle-500/30">
-            Live
+        ) : hasQuote ? (
+          <span className="rounded-full bg-haggle-500/10 px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.16em] text-haggle-600 ring-1 ring-inset ring-haggle-500/30">
+            live
           </span>
-        )}
+        ) : null}
       </div>
 
       {hasQuote ? (
         <>
-          <div className="mt-3 flex items-baseline gap-3">
+          <div className="mt-4 flex items-baseline gap-3">
             <div
-              className="font-display text-[3.25rem] font-black leading-none tracking-tight tabular-nums"
+              className="font-display text-[3rem] font-black leading-none tracking-tight tabular-nums"
               style={{ fontVariationSettings: "'opsz' 144, 'SOFT' 30" }}
             >
               {formatMoney(bestLead.quoted_price_cents)}
             </div>
             {budgetCents !== null && (
-              <div className="font-mono text-[11px] uppercase tracking-[0.14em] text-white/35 tabular-nums">
+              <div className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-400 tabular-nums">
                 / {formatMoney(budgetCents)} budget
               </div>
             )}
           </div>
-          <div className="mt-3 truncate text-[15px] font-medium text-white/85">
-            {bestLead.name}
+
+          <div className="mt-4 rounded-xl bg-white p-3 sticker-2">
+            <div className="truncate text-[14px] font-semibold text-ink-900">
+              {bestLead.name}
+            </div>
+            <div className="mt-1 flex items-center gap-2 text-[11px] text-ink-500">
+              <span className="tabular-nums">
+                {bestLead.rating ? `${bestLead.rating.toFixed(1)} ★` : "unrated"}
+              </span>
+              <span className="text-ink-300">·</span>
+              <span className="truncate font-mono">{leadContact(bestLead)}</span>
+            </div>
           </div>
-          <div className="mt-1 flex items-center gap-2 text-[12px] text-white/45">
-            <span>
-              {bestLead.rating ? `${bestLead.rating.toFixed(1)} stars` : "Unrated"}
-            </span>
-            <span className="text-white/15">·</span>
-            <span className="truncate font-mono text-[11px]">{leadContact(bestLead)}</span>
-          </div>
+
           {savings !== null && (
-            <div className="mt-4 inline-flex items-center gap-2 rounded-md bg-emerald-500/10 px-3 py-1.5 ring-1 ring-inset ring-emerald-400/25">
-              <span className="size-1.5 rounded-full bg-emerald-400" />
-              <span className="font-mono text-[11px] font-medium uppercase tracking-[0.14em] text-emerald-300 tabular-nums">
-                Saving {formatMoney(savings)}
+            <div className="mt-3 inline-flex items-center gap-2 rounded-md bg-emerald-500/10 px-3 py-1.5 ring-1 ring-inset ring-emerald-500/25">
+              <span className="size-1.5 rounded-full bg-emerald-500" />
+              <span className="font-mono text-[11px] font-medium uppercase tracking-[0.14em] text-emerald-700 tabular-nums">
+                saving {formatMoney(savings)}
               </span>
             </div>
           )}
         </>
       ) : (
-        <div className="mt-3">
+        <div className="mt-4">
           <div
-            className="font-display text-[3rem] font-black leading-none tracking-tight text-white/25 tabular-nums"
+            className="font-display text-[2.5rem] font-black leading-none tracking-tight text-ink-200 tabular-nums"
             style={{ fontVariationSettings: "'opsz' 144, 'SOFT' 30" }}
           >
             —
           </div>
-          <p className="mt-3 max-w-xs text-[13px] leading-relaxed text-white/45 text-pretty">
+          <p className="mt-3 text-[13px] leading-relaxed text-ink-500 text-pretty">
             {isTerminal
-              ? "No quotes landed before this job ended."
-              : "Listening for the first quote. Agents are dialing now."}
+              ? "no quotes landed before this job ended."
+              : "listening for the first quote. agents are dialing now."}
           </p>
         </div>
       )}
-    </section>
+    </div>
   );
 }
 
-/* ─── LEAD PIPELINE ───────────────────────────────────────── */
+/* ─── tab: leads pipeline ──────────────────────────────── */
 
-function LeadPipeline({
+function LeadsTab({
   leads,
   bestLeadId,
 }: {
@@ -874,77 +994,130 @@ function LeadPipeline({
     });
   }, [leads]);
 
-  return (
-    <section className="bg-[#0a0a0a] px-4 py-5 sm:px-6">
-      <div className="flex items-center justify-between gap-3">
-        <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-white/35">
-          Pipeline
-        </div>
-        <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-white/30 tabular-nums">
-          {leads.length} leads
-        </div>
+  if (sorted.length === 0) {
+    return (
+      <div className="px-5 py-5">
+        <EmptyLine text="lead search has not returned results yet." />
       </div>
+    );
+  }
 
-      {sorted.length === 0 ? (
-        <div className="mt-3">
-          <EmptyLine text="Lead search has not returned results yet." />
-        </div>
-      ) : (
-        <ol role="list" className="mt-3 space-y-1.5">
-          {sorted.slice(0, 8).map((lead) => {
-            const tone = leadStatusTone(lead.status);
-            const isBest = lead.id === bestLeadId;
-            return (
-              <li
-                key={lead.id}
-                className={[
-                  "group relative grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-md px-3 py-2.5 ring-1 ring-inset transition",
-                  isBest
-                    ? "bg-haggle-500/8 ring-haggle-500/30"
-                    : "bg-white/[0.025] ring-white/8 hover:bg-white/[0.04]",
-                ].join(" ")}
-              >
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className={`size-1.5 shrink-0 rounded-full ${tone.dot}`} />
-                    <span className="truncate text-[13px] font-medium text-white/85">
-                      {lead.name}
+  return (
+    <div className="px-5 py-5">
+      <div className="flex items-center justify-between gap-3 pb-3">
+        <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-ink-400">
+          · pipeline
+        </span>
+        <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-ink-300 tabular-nums">
+          {sorted.length} leads
+        </span>
+      </div>
+      <ol role="list" className="space-y-1.5">
+        {sorted.map((lead) => {
+          const tone = leadStatusTone(lead.status);
+          const isBest = lead.id === bestLeadId;
+          return (
+            <li
+              key={lead.id}
+              className={[
+                "grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-md px-3 py-2.5 ring-1 ring-inset transition",
+                isBest
+                  ? "bg-haggle-500/8 ring-haggle-500/30"
+                  : "bg-white ring-black/[0.06] hover:bg-ink-50",
+              ].join(" ")}
+            >
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className={`size-1.5 shrink-0 rounded-full ${tone.dot}`} />
+                  <span className="truncate text-[13px] font-medium text-ink-900">
+                    {lead.name}
+                  </span>
+                  {isBest && (
+                    <span className="shrink-0 font-mono text-[9px] uppercase tracking-[0.14em] text-haggle-600">
+                      best
                     </span>
-                  </div>
-                  <div className="mt-1 flex items-center gap-2 text-[11px] text-white/45">
-                    <span className={`font-mono uppercase tracking-[0.12em] ${tone.text}`}>
-                      {LEAD_STATUS_LABELS[lead.status] ?? lead.status}
-                    </span>
-                    {lead.rating !== null && (
-                      <>
-                        <span className="text-white/15">·</span>
-                        <span className="tabular-nums">{lead.rating.toFixed(1)}★</span>
-                      </>
-                    )}
-                  </div>
-                </div>
-                <div className="shrink-0 text-right">
-                  <div className="font-mono text-[13px] font-medium text-white/85 tabular-nums">
-                    {formatMoney(lead.quoted_price_cents)}
-                  </div>
-                  {lead.quoted_price_cents === null && (
-                    <div className="font-mono text-[9px] uppercase tracking-[0.14em] text-white/30">
-                      no quote
-                    </div>
                   )}
                 </div>
-              </li>
-            );
-          })}
-        </ol>
-      )}
-    </section>
+                <div className="mt-1 flex items-center gap-2 text-[11px] text-ink-500">
+                  <span className={`font-mono uppercase tracking-[0.12em] ${tone.text}`}>
+                    {LEAD_STATUS_LABELS[lead.status] ?? lead.status}
+                  </span>
+                  {lead.rating !== null && (
+                    <>
+                      <span className="text-ink-300">·</span>
+                      <span className="tabular-nums">{lead.rating.toFixed(1)}★</span>
+                    </>
+                  )}
+                </div>
+              </div>
+              <div className="shrink-0 text-right">
+                <div className="font-mono text-[13px] font-medium text-ink-900 tabular-nums">
+                  {formatMoney(lead.quoted_price_cents)}
+                </div>
+                {lead.quoted_price_cents === null && (
+                  <div className="font-mono text-[9px] uppercase tracking-[0.14em] text-ink-300">
+                    no quote
+                  </div>
+                )}
+              </div>
+            </li>
+          );
+        })}
+      </ol>
+    </div>
   );
 }
 
-/* ─── CALL STRIP ──────────────────────────────────────────── */
+/* ─── tab: activity (events + messages combined) ───────── */
 
-function CallStrip({
+function ActivityTab({ feed, now }: { feed: FeedItem[]; now: number }) {
+  const seenRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    for (const item of feed) seenRef.current.add(item.id);
+  }, [feed]);
+
+  if (feed.length === 0) {
+    return (
+      <div className="px-5 py-5">
+        <EmptyLine text="events appear here as agents work." />
+      </div>
+    );
+  }
+
+  return (
+    <ol role="list" className="divide-y divide-black/[0.04]">
+      {feed.map((item) => {
+        const isNew = !seenRef.current.has(item.id);
+        return (
+          <li
+            key={item.id}
+            className={`grid grid-cols-[64px_minmax(0,1fr)] gap-3 px-5 py-3 ${
+              isNew ? "animate-fade-in" : ""
+            }`}
+          >
+            <div className="pt-px font-mono text-[10px] uppercase tracking-[0.14em] text-ink-300 tabular-nums">
+              {formatRelative(item.createdAt, now)}
+            </div>
+            <div className="min-w-0">
+              <div
+                className={`font-mono text-[10px] font-medium uppercase tracking-[0.14em] ${toneClasses(item.tone)}`}
+              >
+                {item.kind}
+              </div>
+              <p className="mt-0.5 text-[13px] leading-relaxed text-ink-700 text-pretty">
+                {item.text}
+              </p>
+            </div>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+/* ─── live call ticker (bottom strip) ──────────────────── */
+
+function CallTicker({
   calls,
   leads,
   now,
@@ -959,122 +1132,89 @@ function CallStrip({
     return m;
   }, [leads]);
 
-  const liveCalls = calls.filter((c) => c.ended_at === null).slice(0, 3);
-
-  if (liveCalls.length === 0) return null;
-
   return (
-    <section className="bg-[#0a0a0a] px-4 py-5 sm:px-6">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
+    <div className="border-t border-black/[0.06] bg-haggle-500/[0.06] px-4 py-2 sm:px-6">
+      <div className="chat-scroll flex items-center gap-3 overflow-x-auto">
+        <div className="flex shrink-0 items-center gap-1.5">
           <span className="size-1.5 animate-ping-dot rounded-full bg-haggle-500" />
-          <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-haggle-400">
-            On the line
+          <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-haggle-600">
+            on the line
           </span>
         </div>
-        <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-white/30 tabular-nums">
-          {liveCalls.length} live
-        </div>
-      </div>
-      <ol role="list" className="mt-3 space-y-1.5">
-        {liveCalls.map((call) => {
-          const lead = leadById.get(call.lead_id);
-          const duration = formatElapsed(now - call.created_at);
-          return (
-            <li
-              key={call.id}
-              className="relative overflow-hidden rounded-md bg-haggle-500/8 px-3 py-2.5 ring-1 ring-inset ring-haggle-500/25"
-            >
-              <span className="absolute left-0 top-0 h-full w-px bg-haggle-500/60" />
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="truncate text-[13px] font-medium text-white/85">
-                    {lead?.name ?? `Lead #${call.lead_id}`}
-                  </div>
-                  <div className="mt-0.5 truncate font-mono text-[11px] text-white/45">
-                    {lead?.phone ?? call.agentphone_call_id ?? "—"}
-                  </div>
-                </div>
-                <div className="shrink-0 text-right">
-                  <div className="font-mono text-[13px] text-white/85 tabular-nums">
-                    {duration}
-                  </div>
-                  <div className="font-mono text-[9px] uppercase tracking-[0.14em] text-haggle-400">
-                    talking
-                  </div>
-                </div>
-              </div>
-            </li>
-          );
-        })}
-      </ol>
-    </section>
-  );
-}
-
-/* ─── MESSAGE STREAM ──────────────────────────────────────── */
-
-function MessageStream({ messages }: { messages: MessageRow[] }) {
-  const recent = useMemo(
-    () => [...messages].sort((a, b) => b.created_at - a.created_at).slice(0, 6),
-    [messages]
-  );
-
-  return (
-    <section className="bg-[#0a0a0a] px-4 py-5 sm:px-6">
-      <div className="flex items-center justify-between gap-3">
-        <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-white/35">
-          Concierge log
-        </div>
-        <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-white/30 tabular-nums">
-          {messages.length}
-        </div>
-      </div>
-
-      {recent.length === 0 ? (
-        <div className="mt-3">
-          <EmptyLine text="Messages between you and the concierge land here." />
-        </div>
-      ) : (
-        <ol role="list" className="mt-3 space-y-2.5">
-          {recent.map((m) => {
-            const outbound = m.direction === "outbound";
+        <ul role="list" className="flex shrink-0 items-center gap-2">
+          {calls.map((call) => {
+            const lead = leadById.get(call.lead_id);
+            const duration = formatElapsed(now - call.created_at);
             return (
               <li
-                key={m.id}
-                className={[
-                  "rounded-md px-3 py-2 ring-1 ring-inset",
-                  outbound
-                    ? "bg-white/[0.04] ring-white/8"
-                    : "bg-haggle-500/8 ring-haggle-500/20",
-                ].join(" ")}
+                key={call.id}
+                className="inline-flex items-center gap-2 rounded-full bg-white px-3 py-1 ring-1 ring-inset ring-haggle-500/30"
               >
-                <div className="flex items-center justify-between gap-2">
-                  <div className="font-mono text-[9px] font-medium uppercase tracking-[0.16em] text-white/40">
-                    {outbound ? "Haggle" : "You"} · {m.channel}
-                  </div>
-                  <div className="font-mono text-[9px] uppercase tracking-[0.14em] text-white/30 tabular-nums">
-                    {formatTime(m.created_at)}
-                  </div>
-                </div>
-                <p className="mt-1.5 text-[13px] leading-relaxed text-white/80 text-pretty">
-                  {m.body}
-                </p>
+                <span className="size-1.5 animate-ping-dot rounded-full bg-haggle-500" />
+                <span className="truncate text-[12px] font-medium text-ink-900">
+                  {lead?.name ?? `lead #${call.lead_id}`}
+                </span>
+                <span className="font-mono text-[11px] text-ink-500 tabular-nums">
+                  {duration}
+                </span>
               </li>
             );
           })}
-        </ol>
-      )}
-    </section>
+        </ul>
+      </div>
+    </div>
   );
 }
 
-/* ─── SHARED ──────────────────────────────────────────────── */
+/* ─── footer ───────────────────────────────────────────── */
+
+function Footer({ now, error }: { now: number; error: string | null }) {
+  return (
+    <footer className="border-t border-black/[0.06] px-4 py-2.5 sm:px-6">
+      <div className="flex flex-wrap items-center justify-between gap-3 font-mono text-[10px] uppercase tracking-[0.18em] text-ink-300">
+        <span>haggle · live desk</span>
+        <span className="tabular-nums">
+          {error ? `reconnecting · ${error}` : `auto-refresh · 2s · ${formatTime(now)}`}
+        </span>
+      </div>
+    </footer>
+  );
+}
+
+/* ─── shared ───────────────────────────────────────────── */
 
 function EmptyLine({ text }: { text: string }) {
   return (
-    <div className="rounded-md border border-dashed border-white/8 px-3 py-4 text-[13px] text-white/35 text-pretty">
+    <div className="rounded-md border border-dashed border-black/[0.08] px-3 py-4 text-[13px] text-ink-400 text-pretty">
       {text}
     </div>
+  );
+}
+
+function ExpandIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden="true">
+      <path
+        d="M9 3H13V7M7 13H3V9M13 3L9 7M3 13L7 9"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function BackIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden="true">
+      <path
+        d="M10 3L5 8L10 13"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   );
 }

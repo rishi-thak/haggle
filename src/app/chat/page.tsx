@@ -1,10 +1,13 @@
 "use client";
 
 /* ─────────────────────────────────────────────────────────────────────────────
- * /chat — fallback UI while agentphone is down.
+ * /chat — web edition of the haggle concierge.
  *
- * Same orchestrator, web-routed via `web:*` conversation IDs (lib/userChannel).
- * To swap back later: just stop pointing users here.
+ * Mobile: single column iMessage-style.
+ * Desktop (lg+): split layout — brand/status rail on the left, chat on the right.
+ *
+ * Visual language mirrors the Haggle H sticker: chunky red, hard black
+ * drop-shadow ("sticker-*" classes). Tone stays playful + lowercase.
  * ───────────────────────────────────────────────────────── */
 
 import {
@@ -75,7 +78,7 @@ export default function ChatPage() {
   }, []);
 
   return (
-    <main className="chat-canvas relative isolate flex min-h-dvh flex-col text-ink-900 antialiased">
+    <main className="chat-canvas grain relative isolate flex min-h-dvh flex-col text-ink-900 antialiased">
       {!ready ? (
         <StartScreen onStart={startSession} initialPhone={phone} />
       ) : (
@@ -115,9 +118,15 @@ function StartScreen({
     <>
       <header className="relative z-10">
         <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-5">
-          <a href="/" className="flex items-center gap-2.5">
-            <div className="relative size-7 overflow-hidden">
-              <Image src="/Haggle2.png" alt="" fill className="object-contain" />
+          <a href="/" className="group flex items-center gap-2.5">
+            <div className="relative size-8 transition-transform group-hover:-rotate-6">
+              <Image
+                src="/Haggle2.png"
+                alt=""
+                fill
+                priority
+                className="object-contain"
+              />
             </div>
             <span className="font-display text-[19px] font-bold tracking-tight">
               haggle
@@ -127,41 +136,60 @@ function StartScreen({
             href="/"
             className="text-[13px] text-ink-500 transition hover:text-ink-900"
           >
-            ← back to home
+            ← home
           </a>
         </div>
       </header>
 
-      <div className="flex flex-1 items-center justify-center px-6 pb-16">
+      <div className="relative z-10 flex flex-1 items-center justify-center px-6 pb-16">
         <div className="w-full max-w-md animate-fade-in">
-          <div className="mx-auto inline-flex w-full items-center justify-center">
-            <span className="inline-flex items-center gap-2 rounded-full border border-ink-100 bg-white/80 px-3 py-1 text-[12px] font-medium text-ink-500 shadow-sm ring-1 ring-black/[0.02] backdrop-blur">
+          <div className="flex justify-center">
+            <span className="inline-flex items-center gap-2 rounded-full bg-white px-3 py-1 text-[12px] font-medium text-ink-600 sticker-2">
               <span className="relative inline-flex size-1.5">
                 <span className="absolute inset-0 animate-pulse-ring rounded-full bg-haggle-500/70" />
                 <span className="relative size-1.5 rounded-full bg-haggle-500" />
               </span>
-              iMessage is down — chat here instead
+              web concierge
             </span>
           </div>
 
+          <div className="mt-8 flex justify-center">
+            <div className="relative size-24 animate-tilt-in">
+              <Image
+                src="/Haggle2.png"
+                alt="Haggle"
+                fill
+                priority
+                className="object-contain drop-shadow-[4px_4px_0_rgba(10,10,10,0.18)]"
+              />
+            </div>
+          </div>
+
           <h1
-            className="mt-7 text-center font-display text-[clamp(2.25rem,6vw,3.5rem)] font-black leading-[1.02] tracking-[-0.025em] text-balance"
+            className="mt-6 text-center font-display text-[clamp(2rem,5.5vw,3rem)] font-black leading-[1.02] tracking-[-0.025em] text-balance"
             style={{ fontVariationSettings: "'opsz' 144, 'SOFT' 50" }}
           >
-            Chat with <span className="text-haggle-500">Haggle</span>.
+            chat with{" "}
+            <span className="relative inline-block text-haggle-500">
+              haggle
+              <span
+                aria-hidden
+                className="absolute -bottom-1 left-0 right-0 h-1 rounded-full bg-haggle-500/30"
+              />
+            </span>
           </h1>
           <p className="mt-4 text-center text-[15px] leading-relaxed text-ink-500 text-pretty">
-            Same concierge, web edition. We dial, haggle, and book — you just type.
+            same concierge, web edition. we dial, haggle, and book — you just type.
           </p>
 
-          <form onSubmit={submit} className="mt-10">
+          <form onSubmit={submit} className="mt-8">
             <label
               htmlFor="phone"
               className="font-mono text-[10px] uppercase tracking-[0.18em] text-ink-400"
             >
-              Phone number
+              your number
             </label>
-            <div className="mt-2 flex items-center gap-1 rounded-2xl bg-white p-1.5 shadow-sm ring-1 ring-black/10 transition focus-within:shadow-[0_8px_30px_rgba(0,0,0,0.08)] focus-within:ring-ink-900">
+            <div className="mt-2 flex items-center gap-1 rounded-2xl bg-white p-1.5 sticker-3 transition focus-within:translate-x-[-1px] focus-within:translate-y-[-1px]">
               <span className="pl-3 pr-1 font-mono text-[15px] text-ink-300">
                 +1
               </span>
@@ -179,9 +207,9 @@ function StartScreen({
               />
               <button
                 type="submit"
-                className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl bg-ink-900 px-4 py-2.5 text-[14px] font-medium text-white transition hover:bg-haggle-500 active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink-900"
+                className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl bg-haggle-500 px-4 py-2.5 text-[14px] font-bold text-white transition hover:bg-haggle-600 active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-haggle-600"
               >
-                Start
+                start
                 <ArrowRight className="size-3.5" />
               </button>
             </div>
@@ -189,23 +217,27 @@ function StartScreen({
               <p className="mt-3 text-[12px] text-haggle-600">{err}</p>
             )}
             <p className="mt-3 text-[12px] leading-relaxed text-ink-400">
-              Used as your account id. Memory, jobs, and past haggles all carry
-              over to your real iMessage thread later.
+              used as your account id. memory + past haggles carry over to your real
+              iMessage thread later.
             </p>
           </form>
 
-          <div className="mt-12">
-            <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-ink-300">
+          <div className="mt-10">
+            <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-ink-400">
               · try saying
             </div>
             <ul role="list" className="mt-3 space-y-2">
-              {SUGGESTIONS.map((s) => (
-                <li
-                  key={s}
-                  className="rounded-xl bg-white/60 px-3 py-2 text-[13px] text-ink-600 ring-1 ring-black/5"
-                >
-                  <span className="text-haggle-500">›</span>{" "}
-                  <span className="font-mono">{s}</span>
+              {SUGGESTIONS.map((s, i) => (
+                <li key={s}>
+                  <div
+                    className="rounded-xl bg-white px-3 py-2 text-[13px] text-ink-600 sticker-2"
+                    style={{
+                      transform: `rotate(${i % 2 === 0 ? "-0.4deg" : "0.4deg"})`,
+                    }}
+                  >
+                    <span className="text-haggle-500">›</span>{" "}
+                    <span className="font-mono">{s}</span>
+                  </div>
                 </li>
               ))}
             </ul>
@@ -216,7 +248,7 @@ function StartScreen({
   );
 }
 
-/* ─── chat screen ──────────────────────────────────────── */
+/* ─── chat screen (mobile + desktop split) ─────────────── */
 
 function ChatScreen({
   conversationId,
@@ -233,6 +265,20 @@ function ChatScreen({
   const [err, setErr] = useState<string | null>(null);
   const [lastSendAt, setLastSendAt] = useState<number>(0);
   const [connected, setConnected] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+
+  useEffect(() => {
+    const saved = localStorage.getItem("haggle.chat.sidebarOpen");
+    if (saved !== null) setSidebarOpen(saved === "1");
+  }, []);
+
+  function toggleSidebar() {
+    setSidebarOpen((prev) => {
+      const next = !prev;
+      localStorage.setItem("haggle.chat.sidebarOpen", next ? "1" : "0");
+      return next;
+    });
+  }
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
@@ -254,9 +300,6 @@ function ChatScreen({
       setConnected(true);
       if (!json.ok || !json.messages?.length) return;
       setMessages((prev) => {
-        // Drop any optimistic message that the server has now confirmed
-        // (matched by direction + body — server timestamp will differ from
-        // our client-side Date.now()).
         const incomingKeys = new Set(
           json.messages!.map((m) => `${m.direction}|${m.body}`),
         );
@@ -291,7 +334,6 @@ function ChatScreen({
     return () => clearInterval(id);
   }, [fetchMessages]);
 
-  // Track whether the user is pinned to bottom so we don't yank them around.
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -309,7 +351,6 @@ function ChatScreen({
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages.length]);
 
-  // Auto-grow the textarea.
   useEffect(() => {
     const ta = textareaRef.current;
     if (!ta) return;
@@ -368,51 +409,220 @@ function ChatScreen({
   }
 
   return (
-    <div className="flex min-h-dvh flex-col">
-      <ChatHeader
+    <div className="relative z-10 flex min-h-dvh flex-col lg:flex-row">
+      {/* desktop sidebar — on the left, smoothly toggleable */}
+      <DesktopSidebar
         phone={phone}
         connected={connected}
         status={agentStatus}
         onReset={onReset}
-      />
-
-      <FallbackBanner />
-
-      <div
-        ref={scrollRef}
-        className="chat-scroll relative flex-1 overflow-y-auto"
-      >
-        <div className="mx-auto w-full max-w-2xl px-4 pt-6 pb-6 sm:px-6">
-          {messages.length === 0 ? (
-            <EmptyState onPick={applySuggestion} />
-          ) : (
-            <MessageList messages={messages} showTyping={showTyping} />
-          )}
-          <div ref={bottomRef} />
-        </div>
-      </div>
-
-      {err && (
-        <div className="mx-auto -mb-1 max-w-2xl px-6">
-          <p className="text-center text-[12px] text-haggle-600">{err}</p>
-        </div>
-      )}
-
-      <Composer
-        ref={textareaRef}
-        draft={draft}
-        onDraftChange={setDraft}
-        onSubmit={send}
-        onKeyDown={onKeyDown}
-        sending={sending}
-        suggestions={messages.length === 0 ? [] : SUGGESTIONS.slice(0, 3)}
         onSuggest={applySuggestion}
+        open={sidebarOpen}
       />
+
+      {/* chat column (right side on desktop, flexes to fill) */}
+      <div className="flex flex-1 flex-col">
+        <ChatHeader
+          phone={phone}
+          connected={connected}
+          status={agentStatus}
+          onReset={onReset}
+          sidebarOpen={sidebarOpen}
+          onToggleSidebar={toggleSidebar}
+        />
+
+        <div
+          ref={scrollRef}
+          className="chat-scroll relative flex-1 overflow-y-auto"
+        >
+          <div className="mx-auto w-full max-w-2xl px-4 pt-6 pb-6 sm:px-6">
+            {messages.length === 0 ? (
+              <EmptyState onPick={applySuggestion} />
+            ) : (
+              <MessageList messages={messages} showTyping={showTyping} />
+            )}
+            <div ref={bottomRef} />
+          </div>
+        </div>
+
+        {err && (
+          <div className="mx-auto -mb-1 max-w-2xl px-6">
+            <p className="text-center text-[12px] text-haggle-600">{err}</p>
+          </div>
+        )}
+
+        <Composer
+          ref={textareaRef}
+          draft={draft}
+          onDraftChange={setDraft}
+          onSubmit={send}
+          onKeyDown={onKeyDown}
+          sending={sending}
+        />
+      </div>
     </div>
   );
 }
 
-/* ─── header ───────────────────────────────────────────── */
+/* ─── desktop sidebar (lg+ only) ───────────────────────── */
+
+function DesktopSidebar({
+  phone,
+  connected,
+  status,
+  onReset,
+  onSuggest,
+  open,
+}: {
+  phone: string;
+  connected: boolean;
+  status: AgentStatus;
+  onReset: () => void;
+  onSuggest: (s: string) => void;
+  open: boolean;
+}) {
+  return (
+    <aside
+      className={[
+        "hidden shrink-0 overflow-hidden bg-paper/40 transition-[width,opacity] duration-300 ease-out lg:flex",
+        open ? "w-[320px] opacity-100" : "w-0 opacity-0",
+      ].join(" ")}
+      aria-hidden={!open}
+    >
+      <div
+        className={[
+          "flex h-full w-[320px] shrink-0 flex-col border-r border-black/[0.06] px-6 py-7 transition-transform duration-300 ease-out",
+          open ? "translate-x-0" : "-translate-x-4",
+        ].join(" ")}
+      >
+        {/* single clickable H logo — back to landing */}
+        <a
+          href="/"
+          aria-label="back to home"
+          className="group relative mx-auto block size-40 animate-wobble"
+        >
+          <Image
+            src="/Haggle2.png"
+            alt="Haggle"
+            fill
+            priority
+            className="object-contain drop-shadow-[6px_6px_0_rgba(10,10,10,0.16)] transition-transform group-hover:scale-[1.04]"
+          />
+        </a>
+        <p className="mt-3 text-center font-display text-[15px] font-bold tracking-tight text-ink-900">
+          haggle
+        </p>
+        <p className="mt-0.5 text-center text-[12px] text-ink-500">
+          your web concierge
+        </p>
+
+        <div className="mt-8">
+          <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-ink-400">
+            · status
+          </div>
+          <div className="mt-2 rounded-2xl bg-white p-3 sticker-2">
+            <div className="flex items-center gap-2">
+              <StatusDot kind={status.kind} />
+              <span className="text-[13px] font-semibold text-ink-900">
+                {statusHeadline(status.kind)}
+              </span>
+            </div>
+            <p className="mt-1.5 text-[12px] text-ink-500">{status.label}</p>
+            <div className="mt-3 flex items-center justify-between font-mono text-[10px] uppercase tracking-[0.16em]">
+              <span
+                className={[
+                  "inline-flex items-center gap-1",
+                  connected ? "text-emerald-700" : "text-amber-700",
+                ].join(" ")}
+              >
+                <span
+                  className={[
+                    "size-1.5 rounded-full",
+                    connected ? "animate-ping-dot bg-emerald-500" : "bg-amber-500",
+                  ].join(" ")}
+                />
+                {connected ? "live" : "offline"}
+              </span>
+              <span className="text-ink-400">{formatPhoneCompact(phone)}</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-8">
+          <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-ink-400">
+            · drop a line
+          </div>
+          <ul role="list" className="mt-3 space-y-2">
+            {SUGGESTIONS.map((s, i) => (
+              <li key={s}>
+                <button
+                  type="button"
+                  onClick={() => onSuggest(s)}
+                  className="group sticker-pop block w-full rounded-xl bg-white px-3 py-2.5 text-left text-[12px] sticker-2"
+                  style={{
+                    transform: `rotate(${i % 2 === 0 ? "-0.5deg" : "0.5deg"})`,
+                  }}
+                >
+                  <span className="text-haggle-500">›</span>{" "}
+                  <span className="font-mono text-ink-700 group-hover:text-ink-900">
+                    {s}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <div className="mt-auto pt-8">
+          <button
+            type="button"
+            onClick={() => {
+              if (confirm("start a new conversation? this won't delete history")) {
+                onReset();
+              }
+            }}
+            className="sticker-pop inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-ink-900 px-4 py-2.5 text-[13px] font-bold text-white sticker-3"
+          >
+            <PencilSquare className="size-3.5" />
+            new conversation
+          </button>
+          <p className="mt-3 text-center font-mono text-[10px] uppercase tracking-[0.18em] text-ink-300">
+            web concierge · v0.1
+          </p>
+        </div>
+      </div>
+    </aside>
+  );
+}
+
+function statusHeadline(kind: AgentStatus["kind"]): string {
+  if (kind === "thinking") return "thinking";
+  if (kind === "busy") return "working on it";
+  return "haggle is online";
+}
+
+function StatusDot({ kind }: { kind: AgentStatus["kind"] }) {
+  const color =
+    kind === "thinking"
+      ? "bg-amber-400"
+      : kind === "busy"
+        ? "bg-haggle-500"
+        : "bg-emerald-500";
+  return (
+    <span className="relative inline-flex size-2">
+      <span
+        className={[
+          "absolute inset-0 rounded-full opacity-50",
+          color,
+          kind === "thinking" || kind === "busy" ? "animate-pulse-ring" : "",
+        ].join(" ")}
+      />
+      <span className={["relative size-2 rounded-full", color].join(" ")} />
+    </span>
+  );
+}
+
+/* ─── chat header ──────────────────────────────────────── */
 
 type AgentStatus =
   | { kind: "online"; label: string }
@@ -422,8 +632,7 @@ type AgentStatus =
 function computeStatus(messages: Msg[], typing: boolean): AgentStatus {
   if (typing) return { kind: "thinking", label: "typing…" };
   const last = messages.at(-1);
-  if (!last) return { kind: "online", label: "online · usually replies in seconds" };
-  // Heuristic: if the agent's last note hinted at active work, surface it.
+  if (!last) return { kind: "online", label: "usually replies in seconds" };
   const txt = last.body.toLowerCase();
   if (/calling|dialing|negotiat|searching|looking|on it/.test(txt)) {
     return { kind: "busy", label: "working on it" };
@@ -436,26 +645,47 @@ function ChatHeader({
   connected,
   status,
   onReset,
+  sidebarOpen,
+  onToggleSidebar,
 }: {
   phone: string;
   connected: boolean;
   status: AgentStatus;
   onReset: () => void;
+  sidebarOpen: boolean;
+  onToggleSidebar: () => void;
 }) {
   return (
-    <header className="sticky top-0 z-20 border-b border-black/5 bg-paper/80 backdrop-blur-xl">
-      <div className="mx-auto flex w-full max-w-2xl items-center gap-3 px-4 py-3 sm:px-6">
+    <header className="sticky top-0 z-20 border-b border-black/5 bg-paper/85 backdrop-blur-xl">
+      <div className="mx-auto flex w-full max-w-2xl items-center gap-3 px-4 py-3 sm:px-6 lg:max-w-none lg:px-8">
+        {/* left edge: mobile = back, desktop = sidebar toggle */}
         <a
           href="/"
           aria-label="back to home"
-          className="relative -ml-1 inline-flex size-9 items-center justify-center rounded-full text-ink-500 transition hover:bg-ink-50 hover:text-ink-900"
+          className="relative -ml-1 inline-flex size-9 items-center justify-center rounded-full text-ink-500 transition hover:bg-ink-50 hover:text-ink-900 lg:hidden"
         >
           <ChevronLeft className="size-4" />
         </a>
+        <button
+          type="button"
+          onClick={onToggleSidebar}
+          className="relative -ml-1 hidden size-9 shrink-0 items-center justify-center rounded-full text-ink-500 transition hover:bg-ink-50 hover:text-ink-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink-900 lg:inline-flex"
+          aria-label={sidebarOpen ? "hide sidebar" : "show sidebar"}
+          aria-expanded={sidebarOpen}
+          title={sidebarOpen ? "hide sidebar" : "show sidebar"}
+        >
+          <SidebarIcon className="size-4" open={sidebarOpen} />
+        </button>
 
+        {/* sticker H avatar */}
         <div className="relative shrink-0">
-          <div className="relative flex size-10 items-center justify-center overflow-hidden rounded-full bg-haggle-500 ring-2 ring-white">
-            <span className="font-display text-lg font-black text-white">H</span>
+          <div className="relative size-10 rounded-xl bg-white p-1 sticker-2">
+            <Image
+              src="/Haggle2.png"
+              alt=""
+              fill
+              className="rounded-lg object-contain p-0.5"
+            />
           </div>
           <span
             className={[
@@ -472,8 +702,8 @@ function ChatHeader({
 
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
-            <p className="truncate text-[14px] font-semibold tracking-tight text-ink-900">
-              Haggle
+            <p className="truncate text-[15px] font-semibold tracking-tight text-ink-900">
+              haggle
             </p>
             <VerifiedBadge />
           </div>
@@ -483,7 +713,8 @@ function ChatHeader({
           </div>
         </div>
 
-        <div className="hidden items-center gap-2 sm:flex">
+        {/* right chrome — mobile only (desktop sidebar has the live status) */}
+        <div className="hidden items-center gap-2 sm:flex lg:hidden">
           <span
             className={[
               "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.16em]",
@@ -499,13 +730,14 @@ function ChatHeader({
                 connected ? "animate-ping-dot bg-emerald-500" : "bg-amber-500",
               ].join(" ")}
             />
-            {connected ? "Live" : "Offline"}
+            {connected ? "live" : "offline"}
           </span>
           <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-ink-300">
             {formatPhoneCompact(phone)}
           </span>
         </div>
 
+        {/* mobile new-conversation button */}
         <button
           type="button"
           onClick={() => {
@@ -513,7 +745,7 @@ function ChatHeader({
               onReset();
             }
           }}
-          className="relative inline-flex size-9 shrink-0 items-center justify-center rounded-full text-ink-500 transition hover:bg-ink-50 hover:text-ink-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink-900"
+          className="relative inline-flex size-9 shrink-0 items-center justify-center rounded-full text-ink-500 transition hover:bg-ink-50 hover:text-ink-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink-900 lg:hidden"
           aria-label="new conversation"
           title="new conversation"
         >
@@ -527,7 +759,7 @@ function ChatHeader({
 function VerifiedBadge() {
   return (
     <span
-      title="Verified concierge"
+      title="verified concierge"
       className="inline-flex size-3.5 shrink-0 items-center justify-center rounded-full bg-haggle-500 text-white"
     >
       <svg viewBox="0 0 12 12" className="size-2.5" fill="none">
@@ -557,87 +789,53 @@ function ThinkingDots() {
   );
 }
 
-/* ─── fallback banner (collapsible) ────────────────────── */
-
-function FallbackBanner() {
-  const [dismissed, setDismissed] = useState(false);
-  useEffect(() => {
-    setDismissed(localStorage.getItem("haggle.chat.bannerDismissed") === "1");
-  }, []);
-  if (dismissed) return null;
-  return (
-    <div className="border-b border-haggle-500/10 bg-haggle-500/[0.04]">
-      <div className="mx-auto flex w-full max-w-2xl items-start gap-3 px-4 py-2.5 sm:px-6">
-        <span className="mt-0.5 inline-flex size-4 shrink-0 items-center justify-center rounded-full bg-haggle-500/10 text-haggle-600">
-          <svg viewBox="0 0 12 12" className="size-2.5" fill="none">
-            <path
-              d="M6 3.5V6.5M6 8.5V8.6"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-            />
-          </svg>
-        </span>
-        <p className="flex-1 text-[12px] leading-relaxed text-ink-700">
-          Agentphone is having a moment. You&apos;re using the web fallback —
-          everything still works, and your history syncs back to iMessage when
-          it&apos;s up.
-        </p>
-        <button
-          type="button"
-          onClick={() => {
-            localStorage.setItem("haggle.chat.bannerDismissed", "1");
-            setDismissed(true);
-          }}
-          aria-label="dismiss"
-          className="relative -mr-1 inline-flex size-6 items-center justify-center rounded-full text-ink-400 transition hover:bg-ink-100 hover:text-ink-700"
-        >
-          <svg viewBox="0 0 12 12" className="size-3" fill="none">
-            <path
-              d="M3 3L9 9M9 3L3 9"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-            />
-          </svg>
-        </button>
-      </div>
-    </div>
-  );
-}
-
 /* ─── empty state ──────────────────────────────────────── */
 
 function EmptyState({ onPick }: { onPick: (s: string) => void }) {
   return (
-    <div className="flex flex-col items-center pt-12 pb-8 text-center animate-fade-in">
-      <div className="relative">
-        <span className="absolute inset-0 -m-2 animate-pulse-ring rounded-full bg-haggle-500/30" />
-        <div className="relative flex size-16 items-center justify-center overflow-hidden rounded-full bg-haggle-500 ring-4 ring-white">
-          <span className="font-display text-2xl font-black text-white">H</span>
+    <div className="flex flex-col items-center pt-10 pb-8 text-center animate-fade-in">
+      <div className="relative animate-tilt-in">
+        <div className="relative size-20 sm:size-24 lg:hidden">
+          <Image
+            src="/Haggle2.png"
+            alt="Haggle"
+            fill
+            priority
+            className="object-contain drop-shadow-[5px_5px_0_rgba(10,10,10,0.18)]"
+          />
+        </div>
+        {/* desktop hides the empty-state logo because the sidebar already has the big H */}
+        <div className="relative hidden lg:block">
+          <span className="inline-flex items-center gap-2 rounded-full bg-white px-3 py-1 text-[11px] font-medium text-ink-600 sticker-2">
+            <span className="size-1.5 animate-ping-dot rounded-full bg-haggle-500" />
+            ready when you are
+          </span>
         </div>
       </div>
       <h2
-        className="mt-5 font-display text-[26px] font-black leading-tight tracking-[-0.02em]"
+        className="mt-6 font-display text-[26px] font-black leading-tight tracking-[-0.02em]"
         style={{ fontVariationSettings: "'opsz' 144, 'SOFT' 50" }}
       >
-        What can we haggle for you?
+        what can we haggle for you?
       </h2>
-      <p className="mt-2 max-w-[28ch] text-[14px] leading-relaxed text-ink-500 text-pretty">
-        Tell us what you need and a budget. We&apos;ll call providers in parallel
+      <p className="mt-2 max-w-[32ch] text-[14px] leading-relaxed text-ink-500 text-pretty">
+        tell us what you need and a budget. we&apos;ll call providers in parallel
         and book the best one.
       </p>
 
       <ul
         role="list"
-        className="mt-8 grid w-full max-w-md gap-2 sm:grid-cols-2"
+        className="mt-8 grid w-full max-w-md gap-2 sm:grid-cols-2 lg:hidden"
       >
-        {SUGGESTIONS.map((s) => (
+        {SUGGESTIONS.map((s, i) => (
           <li key={s}>
             <button
               type="button"
               onClick={() => onPick(s)}
-              className="group relative flex w-full items-center justify-between gap-2 rounded-xl bg-white p-3 text-left text-[13px] text-ink-700 shadow-sm ring-1 ring-black/5 transition hover:-translate-y-px hover:text-ink-900 hover:shadow-md hover:ring-black/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink-900"
+              className="group sticker-pop relative flex w-full items-center justify-between gap-2 rounded-xl bg-white p-3 text-left text-[13px] text-ink-700 sticker-2"
+              style={{
+                transform: `rotate(${i % 2 === 0 ? "-0.5deg" : "0.5deg"})`,
+              }}
             >
               <span className="font-mono text-[12px] leading-snug">{s}</span>
               <ArrowRight className="size-3.5 shrink-0 text-ink-300 transition group-hover:translate-x-0.5 group-hover:text-haggle-500" />
@@ -649,7 +847,7 @@ function EmptyState({ onPick }: { onPick: (s: string) => void }) {
   );
 }
 
-/* ─── message list with date dividers & smart timestamps ─ */
+/* ─── message list with date dividers ──────────────────── */
 
 function MessageList({
   messages,
@@ -749,14 +947,14 @@ function Bubble({ msg, showTail }: { msg: Msg; showTail: boolean }) {
     >
       <div
         className={[
-          "relative max-w-[82%] whitespace-pre-wrap px-3.5 py-2 text-[15px] leading-snug shadow-sm",
+          "relative max-w-[82%] whitespace-pre-wrap px-3.5 py-2 text-[15px] leading-snug",
           isMe
             ? showTail
-              ? "bubble-me bg-[#2C7BF2] text-white"
-              : "rounded-[22px] bg-[#2C7BF2] text-white"
+              ? "bubble-me bubble-sticker-blue bg-[#2C7BF2] text-white"
+              : "rounded-[22px] bubble-sticker-blue bg-[#2C7BF2] text-white"
             : showTail
-              ? "bubble-them bg-ink-50 text-ink-900 ring-1 ring-black/5"
-              : "rounded-[22px] bg-ink-50 text-ink-900 ring-1 ring-black/5",
+              ? "bubble-them bubble-sticker-gray bg-white text-ink-900"
+              : "rounded-[22px] bubble-sticker-gray bg-white text-ink-900",
         ].join(" ")}
       >
         {linkify(msg.body, isMe)}
@@ -768,7 +966,7 @@ function Bubble({ msg, showTail }: { msg: Msg; showTail: boolean }) {
 function TypingBubble() {
   return (
     <div className="flex animate-fade-in items-start">
-      <div className="bubble-them flex items-center gap-1 bg-ink-50 px-3.5 py-3 ring-1 ring-black/5">
+      <div className="bubble-them bubble-sticker-gray flex items-center gap-1 bg-white px-3.5 py-3">
         {[0, 1, 2].map((i) => (
           <span
             key={i}
@@ -812,8 +1010,6 @@ type ComposerProps = {
   onSubmit: (e?: React.FormEvent) => void;
   onKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
   sending: boolean;
-  suggestions: string[];
-  onSuggest: (s: string) => void;
 };
 
 const Composer = function Composer({
@@ -823,31 +1019,14 @@ const Composer = function Composer({
   onSubmit,
   onKeyDown,
   sending,
-  suggestions,
-  onSuggest,
 }: ComposerProps & { ref: React.RefObject<HTMLTextAreaElement | null> }) {
   const canSend = draft.trim().length > 0 && !sending;
   return (
-    <div className="sticky bottom-0 z-10 border-t border-black/5 bg-paper/85 backdrop-blur-xl composer-safe">
-      <div className="mx-auto w-full max-w-2xl px-4 pt-2.5 pb-3 sm:px-6">
-        {suggestions.length > 0 && (
-          <div className="-mx-1 mb-2 flex gap-1.5 overflow-x-auto pb-1">
-            {suggestions.map((s) => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => onSuggest(s)}
-                className="shrink-0 rounded-full bg-white px-3 py-1.5 font-mono text-[11px] text-ink-600 shadow-sm ring-1 ring-black/5 transition hover:bg-ink-50 hover:text-ink-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink-900"
-              >
-                {s}
-              </button>
-            ))}
-          </div>
-        )}
-
+    <div className="sticky bottom-0 z-10 composer-safe">
+      <div className="mx-auto w-full max-w-2xl px-4 pt-3 pb-3 sm:px-6">
         <form
           onSubmit={onSubmit}
-          className="flex items-end gap-2 rounded-3xl bg-white p-1.5 shadow-sm ring-1 ring-black/10 transition focus-within:shadow-[0_8px_30px_rgba(0,0,0,0.06)] focus-within:ring-ink-900/40"
+          className="flex items-end gap-2 rounded-3xl bg-white p-1.5 sticker-3 transition focus-within:translate-x-[-1px] focus-within:translate-y-[-1px]"
         >
           <label htmlFor="composer" className="sr-only">
             Message
@@ -860,7 +1039,7 @@ const Composer = function Composer({
             onChange={(e) => onDraftChange(e.target.value)}
             onKeyDown={onKeyDown}
             rows={1}
-            placeholder="iMessage"
+            placeholder="say what you need…"
             className="block min-h-[40px] flex-1 resize-none bg-transparent px-3 py-2 text-[15px] text-ink-900 outline-none placeholder:text-ink-300 max-sm:text-base"
           />
           <button
@@ -868,9 +1047,9 @@ const Composer = function Composer({
             disabled={!canSend}
             aria-label="Send"
             className={[
-              "relative flex size-9 shrink-0 items-center justify-center rounded-full transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink-900",
+              "relative flex size-10 shrink-0 items-center justify-center rounded-full transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-haggle-600",
               canSend
-                ? "bg-[#2C7BF2] text-white shadow-sm hover:bg-[#1f6ad6] active:scale-95"
+                ? "bg-haggle-500 text-white sticker-2 hover:bg-haggle-600 active:translate-x-px active:translate-y-px"
                 : "bg-ink-100 text-ink-300",
             ].join(" ")}
           >
@@ -881,7 +1060,7 @@ const Composer = function Composer({
             )}
           </button>
         </form>
-        <p className="mt-1.5 text-center font-mono text-[10px] uppercase tracking-[0.18em] text-ink-300">
+        <p className="mt-2 text-center font-mono text-[10px] uppercase tracking-[0.18em] text-ink-300">
           enter to send · shift + enter for new line
         </p>
       </div>
@@ -953,6 +1132,33 @@ function PencilSquare({ className }: { className?: string }) {
   );
 }
 
+function SidebarIcon({ className, open }: { className?: string; open: boolean }) {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" className={className} aria-hidden="true">
+      <rect
+        x="2"
+        y="3"
+        width="12"
+        height="10"
+        rx="2"
+        stroke="currentColor"
+        strokeWidth="1.5"
+      />
+      <line
+        x1="10.5"
+        y1="3"
+        x2="10.5"
+        y2="13"
+        stroke="currentColor"
+        strokeWidth="1.5"
+      />
+      {open && (
+        <rect x="11" y="4" width="2.5" height="8" rx="0.5" fill="currentColor" />
+      )}
+    </svg>
+  );
+}
+
 function Spinner({ className }: { className?: string }) {
   return (
     <svg
@@ -979,10 +1185,10 @@ function formatDay(ts: number): string {
   const yesterday = new Date(today.getTime() - 24 * 60 * 60 * 1000);
   const target = new Date(d.getFullYear(), d.getMonth(), d.getDate());
   if (target.getTime() === today.getTime()) {
-    return `Today · ${formatTime(ts)}`;
+    return `today · ${formatTime(ts)}`;
   }
   if (target.getTime() === yesterday.getTime()) {
-    return `Yesterday · ${formatTime(ts)}`;
+    return `yesterday · ${formatTime(ts)}`;
   }
   return d.toLocaleDateString(undefined, {
     weekday: "short",
