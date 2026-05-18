@@ -565,6 +565,15 @@ function BrowserMosaic({
     ? sessions.find((s) => s.id === focusedSessionId)
     : null;
 
+  // Browser Use's cloud live preview throttles when multiple iframes are open at
+  // once — only render the LIVE iframe for ONE session at a time (the focused
+  // one, or the most-recently-updated by default). Other tiles show the latest
+  // screenshot from the session's progress events.
+  const activeId =
+    focused?.id ??
+    [...sessions].sort((a, b) => b.updated_at - a.updated_at)[0]?.id ??
+    null;
+
   if (focused) {
     const others = sessions.filter((s) => s.id !== focused.id);
     return (
@@ -578,6 +587,7 @@ function BrowserMosaic({
           <BrowserTile
             session={focused}
             variant="hero"
+            isActive
             onClick={() => onFocus(null)}
           />
           {others.length > 0 && (
@@ -587,6 +597,7 @@ function BrowserMosaic({
                   key={s.id}
                   session={s}
                   variant="strip"
+                  isActive={false}
                   onClick={() => onFocus(s.id)}
                 />
               ))}
@@ -614,6 +625,7 @@ function BrowserMosaic({
             key={s.id}
             session={s}
             variant="grid"
+            isActive={s.id === activeId}
             onClick={() => onFocus(s.id)}
           />
         ))}
@@ -663,20 +675,24 @@ function MosaicHeader({
 function BrowserTile({
   session,
   variant,
+  isActive,
   onClick,
 }: {
   session: BrowserSessionRow;
   variant: "hero" | "grid" | "strip";
+  // Only the active tile streams the live iframe — Browser Use's cloud preview
+  // is flaky with multiple concurrent viewers. Inactive tiles show a snapshot.
+  isActive: boolean;
   onClick: () => void;
 }) {
   const live = sessionIsLive(session);
-  // share_url is the unauthenticated, embeddable URL. Fall back to live_url
-  // for backfill / when share-mint fails.
   const embedSource = session.share_url ?? session.live_url;
   const liveUrl = embedSource
     ? withLivePreviewParams(embedSource, { theme: "light" })
     : null;
   const openUrl = session.share_url ?? session.live_url;
+  const showIframe = isActive && !!liveUrl;
+  const snapshot = session.screenshot_url;
 
   if (variant === "strip") {
     return (
@@ -689,13 +705,12 @@ function BrowserTile({
         ].join(" ")}
         aria-label={`focus ${session.label || `agent ${session.id}`}`}
       >
-        {liveUrl ? (
-          <iframe
-            key={liveUrl}
-            title={session.label}
-            src={liveUrl}
-            allow="autoplay"
-            className="pointer-events-none absolute inset-0 h-full w-full border-0"
+        {snapshot ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={snapshot}
+            alt=""
+            className="absolute inset-0 h-full w-full object-cover"
           />
         ) : (
           <div className="absolute inset-0 flex items-center justify-center bg-ink-100">
@@ -768,12 +783,12 @@ function BrowserTile({
 
       {/* viewport */}
       <div className={`relative ${isHero ? "flex-1" : "aspect-video"} bg-ink-100`}>
-        {liveUrl ? (
+        {showIframe ? (
           <>
             <iframe
               key={liveUrl}
               title={`${session.label} live preview`}
-              src={liveUrl}
+              src={liveUrl!}
               allow="autoplay"
               className="absolute inset-0 h-full w-full animate-fade-in border-0"
             />
@@ -787,6 +802,27 @@ function BrowserTile({
               />
             )}
           </>
+        ) : snapshot ? (
+          <button
+            type="button"
+            onClick={onClick}
+            className="absolute inset-0 block bg-ink-100 transition hover:bg-haggle-500/5"
+            aria-label={`focus ${session.label} for live view`}
+            title="click for live view"
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={snapshot}
+              alt=""
+              className="h-full w-full object-cover"
+            />
+            {live && (
+              <span className="absolute top-2 right-2 inline-flex items-center gap-1 rounded-full bg-white/95 px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.16em] text-ink-700 shadow-sm">
+                <span className="size-1.5 animate-ping-dot rounded-full bg-haggle-500" />
+                click for live
+              </span>
+            )}
+          </button>
         ) : (
           <button
             type="button"

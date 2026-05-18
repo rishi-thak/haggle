@@ -1,6 +1,6 @@
 import { after } from "next/server";
 import { appendCallTurn, deleteCallTurns, findCallByAgentphoneId, getCallTurns, getJob, getLead, getUserByConversation } from "@/lib/repo";
-import { nextTurn } from "@/lib/negotiator";
+import { detectAgentClosing, nextTurn } from "@/lib/negotiator";
 import { recallProviderHistory } from "@/lib/supermemory";
 import type { NegotiationContext } from "@/lib/types";
 
@@ -65,22 +65,34 @@ export async function buildAgentphoneVoiceResponse(body: Record<string, unknown>
   const history = await getCallTurns(callId);
   const turn = await nextTurn(ctx, history, leadUtterance);
 
+  const turnCount = history.length + 2;
+  const TURN_CAP = 20;
+  const hitCap = turnCount >= TURN_CAP;
+
+  // If we hit the cap but the model's reply isn't a goodbye, prepend a graceful
+  // close so the lead doesn't experience a dead-air hangup.
+  let agentText = turn.text;
+  if (hitCap && !detectAgentClosing(agentText)) {
+    const firstName = lead.name.split(" ")[0] ?? "";
+    agentText = `Got it. Let me wrap here, I'll confirm with the customer and circle back. Thanks ${firstName}.`.trim();
+  }
+
   // Persist the new turns
   await appendCallTurn(callId, "lead", leadUtterance);
-  await appendCallTurn(callId, "agent", turn.text);
+  await appendCallTurn(callId, "agent", agentText);
 
-  const turnCount = history.length + 2;
-  const TURN_CAP = 16;
-  const hangup = turn.shouldHangup || turnCount >= TURN_CAP;
+  const hangup = turn.shouldHangup || hitCap;
   console.log("[agentphoneVoice] reply", {
     callId,
     turnCount,
     hangup,
-    text: turn.text,
+    hitCap,
+    modelHangup: turn.shouldHangup,
+    text: agentText,
   });
 
   if (hangup) {
-    const fullHistory = [...history, { role: "lead" as const, text: leadUtterance }, { role: "agent" as const, text: turn.text }];
+    const fullHistory = [...history, { role: "lead" as const, text: leadUtterance }, { role: "agent" as const, text: agentText }];
     const transcript = fullHistory
       .map((h) => `${h.role === "agent" ? "Me" : lead.name}: ${h.text}`)
       .join("\n");
@@ -107,8 +119,8 @@ export async function buildAgentphoneVoiceResponse(body: Record<string, unknown>
       }
     });
 
-    return { text: turn.text, hangup: true, action: "hangup" };
+    return { text: agentText, hangup: true, action: "hangup" };
   }
 
-  return { text: turn.text };
+  return { text: agentText };
 }

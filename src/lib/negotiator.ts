@@ -229,33 +229,40 @@ const TurnSchema = z.object({
     ),
 });
 
+// Closings are by nature *wrap-up* phrases, so we only treat them as goodbyes
+// when they sit at the END of the utterance. This avoids firing on mid-call
+// phrases like "appreciate it, what's the address?" or
+// "we'll be in touch with our supplier about that".
+const END = /[\s.!,?"']*$/;
+
 const GOODBYE_PATTERNS = [
-  /\bbye\b/i,
-  /\bgoodbye\b/i,
-  /\bhave a (good|great|nice) (one|day|night|evening)\b/i,
-  /\btake care\b/i,
-  /\bappreciate (it|the time|your time)\b/i,
-  /\btalk (to you )?(soon|later)\b/i,
+  // Hard signals — fire anywhere because they're unambiguous refusals.
   /\bnot interested\b/i,
   /\bstop calling\b/i,
   /\bremove (me|us) from\b/i,
   /\bwrong number\b/i,
   /\byou have the wrong\b/i,
   /\bwe don'?t do that\b/i,
+  // Soft goodbyes — only at end of utterance.
+  new RegExp(`\\bgoodbye\\b${END.source}`, "i"),
+  new RegExp(`(^|[\\s.])bye${END.source}`, "i"),
+  new RegExp(`\\bhave a (good|great|nice) (one|day|night|evening)\\b${END.source}`, "i"),
+  new RegExp(`\\btake care\\b${END.source}`, "i"),
+  new RegExp(`\\bappreciate (the time|your time)\\b${END.source}`, "i"),
+  new RegExp(`\\btalk (to you )?(soon|later)\\b${END.source}`, "i"),
 ];
 
-
-// If the agent says one of these in its own outgoing turn, the call is done.
-// This is the deterministic backstop for when the LLM forgets to set shouldHangup.
+// If the agent says one of these as its FINAL clause, the call is done. This
+// is the deterministic backstop for when the LLM forgets to set shouldHangup.
 const AGENT_CLOSING_PATTERNS = [
-  /\b(we'?ll|i'?ll) (be in touch|confirm with the customer|reach back out)\b/i,
-  /\bappreciate (the time|your time|it)\b/i,
-  /\bthanks (so much )?(for (the time|your time|chatting))\b/i,
-  /\bno worries[,.!]?\s+(appreciate|thanks)/i,
-  /\b(have a (good|great|nice) (one|day|rest of your))\b/i,
-  /\btalk (to you )?(soon|later)\b/i,
-  /\bgoodbye\b/i,
-  /^bye[.!]?$/i,
+  new RegExp(`\\b(we'?ll|i'?ll) (be in touch|confirm with the customer|reach back out)\\b${END.source}`, "i"),
+  new RegExp(`\\bappreciate (the time|your time)\\b${END.source}`, "i"),
+  new RegExp(`\\bthanks (so much )?for (the time|your time|chatting)\\b${END.source}`, "i"),
+  new RegExp(`\\bno worries[,.!]?\\s+(appreciate|thanks)\\b.*${END.source}`, "i"),
+  new RegExp(`\\bhave a (good|great|nice) (one|day|rest of your)\\b${END.source}`, "i"),
+  new RegExp(`\\btalk (to you )?(soon|later)\\b${END.source}`, "i"),
+  new RegExp(`\\bgoodbye\\b${END.source}`, "i"),
+  /^bye[.!]?\s*$/i,
 ];
 
 export function detectAgentClosing(text: string): boolean {

@@ -61,40 +61,9 @@ function normalizeSession(
   };
 }
 
-/**
- * Mint an unauthenticated public-share URL for a session. `liveUrl` from the
- * SDK is private — embedded iframes hit a login wall unless the viewer is
- * signed into browser-use. This share URL is the documented embeddable form.
- *
- * The v3 SDK doesn't expose this endpoint, so we hit the v2 HTTP API directly.
- * Returns null on any failure so the caller can fall back to liveUrl.
- */
-async function createPublicShareUrl(sessionId: string): Promise<string | null> {
-  if (!env.BROWSER_USE_API_KEY) return null;
-  try {
-    const res = await fetch(
-      `https://api.browser-use.com/api/v2/sessions/${encodeURIComponent(sessionId)}/public-share`,
-      {
-        method: "POST",
-        headers: {
-          "X-Browser-Use-API-Key": env.BROWSER_USE_API_KEY,
-          "Content-Type": "application/json",
-        },
-      },
-    );
-    if (!res.ok) {
-      console.warn(
-        `[browseruse] public-share ${sessionId} → ${res.status} ${await res.text().catch(() => "")}`,
-      );
-      return null;
-    }
-    const body = (await res.json()) as { shareUrl?: string };
-    return body.shareUrl ?? null;
-  } catch (error) {
-    console.warn(`[browseruse] public-share ${sessionId} failed`, error);
-    return null;
-  }
-}
+// Note: v3 sessions embed `liveUrl` directly — it's hosted at live.browser-use.com
+// and is designed for iframe embedding without auth. The v2 public-share endpoint
+// (`/api/v2/sessions/{id}/public-share`) does not accept v3 session IDs.
 
 function normalizeMessage(message: MessageResponse): BrowserUseObservedMessage {
   return {
@@ -133,14 +102,13 @@ async function runBrowserUseTask<T extends z4.ZodType>(args: {
       outputSchema: z4.toJSONSchema(args.schema),
     });
     sessionId = created.id;
-    // Mint a public share URL once — liveUrl from the SDK is private and won't
-    // embed in an iframe for visitors who aren't signed into browser-use.
-    const shareUrl = await createPublicShareUrl(sessionId);
-    await notifyObserver(() =>
-      args.observer?.onSessionStarted?.(normalizeSession(created, shareUrl)),
+    console.log(
+      `[browseruse] session created id=${created.id} status=${created.status} liveUrl=${created.liveUrl ?? "(null)"}`,
     );
+    await notifyObserver(() => args.observer?.onSessionStarted?.(normalizeSession(created)));
 
     let cursor: string | null = null;
+    let lastLoggedLiveUrl: string | null = created.liveUrl ?? null;
     const deadline = Date.now() + (args.timeoutMs ?? DEFAULT_BROWSER_USE_TIMEOUT_MS);
 
     while (Date.now() < deadline) {
@@ -151,9 +119,11 @@ async function runBrowserUseTask<T extends z4.ZodType>(args: {
       }
 
       const current = await client.sessions.get(sessionId);
-      await notifyObserver(() =>
-        args.observer?.onSessionUpdated?.(normalizeSession(current, shareUrl)),
-      );
+      if (current.liveUrl && current.liveUrl !== lastLoggedLiveUrl) {
+        console.log(`[browseruse] liveUrl ready id=${current.id} url=${current.liveUrl}`);
+        lastLoggedLiveUrl = current.liveUrl;
+      }
+      await notifyObserver(() => args.observer?.onSessionUpdated?.(normalizeSession(current)));
       if (TERMINAL_SESSION_STATUSES.has(current.status)) {
         return parseStructuredOutput(current.output, args.schema);
       }
