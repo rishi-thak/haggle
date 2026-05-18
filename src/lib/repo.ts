@@ -176,8 +176,14 @@ function rowToEmailLeadMatch(r: JsonRecord): EmailLeadMatch {
   };
 }
 
-export async function getOrCreateUser(phone: string): Promise<User> {
-  const row = await convexClient().mutation(api.repo.getOrCreateUser, { phone });
+export async function getOrCreateUser(
+  phone: string,
+  preferredFromNumber?: string | null,
+): Promise<User> {
+  const row = await convexClient().mutation(api.repo.getOrCreateUser, {
+    phone,
+    ...(preferredFromNumber !== undefined ? { preferredFromNumber } : {}),
+  });
   return rowToUser(row as JsonRecord);
 }
 

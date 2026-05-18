@@ -9,6 +9,7 @@ import type {
   MessageRow,
   WatchSnapshot,
 } from "@/lib/types";
+import { computeBestLead } from "@/lib/leadSelection";
 import { withLivePreviewParams } from "@/lib/watch";
 
 type ApiState =
@@ -244,15 +245,6 @@ function buildFeed(snapshot: WatchSnapshot): FeedItem[] {
   return [...browser, ...messages]
     .sort((a, b) => b.createdAt - a.createdAt)
     .slice(0, 80);
-}
-
-function computeBestLead(leads: Lead[]): Lead | null {
-  const agreed = leads.find((l) => l.status === "agreed" && l.quoted_price_cents !== null);
-  if (agreed) return agreed;
-  const priced = leads
-    .filter((l) => l.quoted_price_cents !== null)
-    .sort((a, b) => (a.quoted_price_cents ?? 0) - (b.quoted_price_cents ?? 0));
-  return priced[0] ?? null;
 }
 
 export default function WatchDashboard({ token }: { token: string }) {

@@ -40,7 +40,6 @@ import {
   getOrCreateUser,
   getRecentMessages,
   getUserByConversation,
-  setUserPreferredFromNumber,
   insertLead,
   listLeads,
   logMessage,
@@ -61,6 +60,11 @@ import type { Job, Lead, NegotiationContext, NegotiationOutcome } from "./types"
 import { env } from "./env";
 import { buildWatchUrl } from "./watch";
 import { createPayoutToken, buildPayoutUrl } from "./payoutToken";
+import {
+  filterNewLeadCandidates,
+  getCallableLeads,
+  getPendingLeadIdsToRetireBeforeResearch,
+} from "./leadSelection";
 
 const MAX_LEADS = 8;
 const MAX_PARALLEL_CALLS = 4;
@@ -436,8 +440,8 @@ export async function handleInboundIMessage(args: {
   // Remember which of our numbers the user texted so replies go back on the
   // same channel (iMessage vs SMS).
   if (toPhone) {
-    await setUserPreferredFromNumber(fromPhone, toPhone).catch((e) =>
-      console.error("[orchestrator] setUserPreferredFromNumber failed", e),
+    await getOrCreateUser(fromPhone, toPhone).catch((e) =>
+      console.error("[orchestrator] getOrCreateUser preferred number failed", e),
     );
   }
 
@@ -560,6 +564,7 @@ export async function handleInboundIMessage(args: {
         );
       } else {
         const expanded = `${existing.intent_raw}\n\nuser feedback on options: ${text}`;
+        await retirePendingLeadsBeforeResearch(existing.id);
         await updateJob(existing.id, { intent_raw: expanded });
         await notify(existing, "got it — re-searching with that in mind");
         runLeadSearchAndApproval(existing.id, user.container_tag).catch((e) =>
@@ -694,7 +699,9 @@ async function scrapeAndPersistLeads(args: {
     args.count,
     createBrowserUseObserver(args.jobId, "Lead search", "lead_search"),
   );
-  for (const s of scraped) {
+  const existingLeads = await listLeads(args.jobId);
+  const candidates = filterNewLeadCandidates(scraped, existingLeads);
+  for (const s of candidates) {
     await insertLead({
       job_id: args.jobId,
       name: s.name,
@@ -714,6 +721,13 @@ async function scrapeAndPersistLeads(args: {
   const leads = await listLeads(args.jobId);
   leads.sort((a, b) => (b.rank_score ?? 0) - (a.rank_score ?? 0));
   return leads;
+}
+
+async function retirePendingLeadsBeforeResearch(jobId: number): Promise<number> {
+  const leads = await listLeads(jobId);
+  const leadIds = getPendingLeadIdsToRetireBeforeResearch(leads);
+  await Promise.all(leadIds.map((id) => updateLead(id, { status: "declined" })));
+  return leadIds.length;
 }
 
 async function enrichTopLeads(args: {
@@ -823,7 +837,7 @@ async function runLeadSearchAndApproval(jobId: number, containerTag: string): Pr
 
   await runLeadSearch(jobId);
   const job = (await getJob(jobId))!;
-  const leads = await listLeads(jobId);
+  const leads = getCallableLeads(await listLeads(jobId));
   if (!leads.length) {
     await updateJob(jobId, { status: "failed" });
     await notify(job, "couldn't find anyone for that — try rephrasing or a different area?");
@@ -864,7 +878,7 @@ async function runCalls(jobId: number, containerTag: string): Promise<void> {
   const job0 = await getJob(jobId);
   if (!job0) return;
 
-  const leads = await listLeads(jobId);
+  const leads = getCallableLeads(await listLeads(jobId));
   if (!leads.length) {
     await updateJob(jobId, { status: "failed" });
     await notify(job0, "no leads to call — want me to try again?");

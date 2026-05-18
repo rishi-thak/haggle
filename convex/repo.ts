@@ -315,13 +315,22 @@ async function getEmailThreadDocByLegacyId(ctx: QueryCtx | MutationCtx, id: numb
 }
 
 export const getOrCreateUser = mutation({
-  args: { phone: v.string() },
+  args: { phone: v.string(), preferredFromNumber: v.optional(nullableString) },
   handler: async (ctx, args) => {
     const existing = await ctx.db
       .query("users")
       .withIndex("by_phone", (q) => q.eq("phone", args.phone))
       .unique();
-    if (existing) return userRow(existing);
+    if (existing) {
+      if (
+        args.preferredFromNumber !== undefined &&
+        (existing.preferred_from_number ?? null) !== args.preferredFromNumber
+      ) {
+        await ctx.db.patch(existing._id, { preferred_from_number: args.preferredFromNumber });
+        return userRow({ ...existing, preferred_from_number: args.preferredFromNumber });
+      }
+      return userRow(existing);
+    }
 
     const t = now();
     const doc = {
@@ -329,7 +338,7 @@ export const getOrCreateUser = mutation({
       phone: args.phone,
       container_tag: `user_${args.phone.replace(/[^0-9]/g, "")}`,
       sponge_wallet_address: null,
-      preferred_from_number: null,
+      preferred_from_number: args.preferredFromNumber ?? null,
       created_at: t,
     };
     await ctx.db.insert("users", doc);
@@ -1124,14 +1133,21 @@ export const listWebChatMessages = query({
     sinceMs: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    const rows = await ctx.db
-      .query("web_chat_messages")
-      .withIndex("by_conversation_id", (q) => q.eq("conversation_id", args.conversationId))
-      .collect();
-    const filtered = args.sinceMs
-      ? rows.filter((r) => r.created_at > args.sinceMs!)
-      : rows;
-    return filtered
+    const rows =
+      args.sinceMs !== undefined
+        ? await ctx.db
+            .query("web_chat_messages")
+            .withIndex("by_conversation_id_and_created_at", (q) =>
+              q.eq("conversation_id", args.conversationId).gt("created_at", args.sinceMs!),
+            )
+            .collect()
+        : await ctx.db
+            .query("web_chat_messages")
+            .withIndex("by_conversation_id_and_created_at", (q) =>
+              q.eq("conversation_id", args.conversationId),
+            )
+            .collect();
+    return rows
       .sort((a, b) => a.created_at - b.created_at)
       .map((r) => ({
         direction: r.direction,
