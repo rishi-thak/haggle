@@ -1028,7 +1028,6 @@ async function runCalls(jobId: number, containerTag: string): Promise<void> {
   const callResults = await Promise.all(
     calling.map(async (lead) => {
       try {
-        const greeting = `Hi, this is Haggle calling about ${intentService}.`;
         await logMessage({
           jobId,
           direction: "outbound",
@@ -1050,7 +1049,7 @@ async function runCalls(jobId: number, containerTag: string): Promise<void> {
         };
         const call = await createOutboundCall({
           toNumber: lead.phone!,
-          initialGreeting: greeting,
+          initialGreeting: "",
           systemPrompt: buildSystemPrompt(ctx),
           variables: { jobId: String(jobId), leadId: String(lead.id) },
         });
