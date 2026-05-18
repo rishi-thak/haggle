@@ -71,8 +71,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true });
   }
 
-  // Call completed
-  if (event === "agent.call.completed" || event === "agent.call.failed" || event === "agent.call.no_answer") {
+  // Call completed. Accept both `agent.call.*` and the shorter `call.*` event
+  // names since Agentphone's payloads have varied in practice.
+  if (/^(agent\.)?call\.(completed|failed|no_answer|ended)$/.test(event)) {
     const callId = String(body.callId ?? (body.data as Record<string, unknown> | undefined)?.callId ?? "");
     const data = (body.data as Record<string, unknown>) ?? {};
     const transcript = String(data.transcript ?? body.transcript ?? "");

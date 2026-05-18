@@ -1,3 +1,4 @@
+import { after } from "next/server";
 import { findCallByAgentphoneId, getJob, getLead, getUserByConversation } from "@/lib/repo";
 import { nextTurn } from "@/lib/negotiator";
 import { recallProviderHistory } from "@/lib/supermemory";
@@ -6,6 +7,7 @@ import type { NegotiationContext } from "@/lib/types";
 type VoiceResponse = {
   text: string;
   hangup?: boolean;
+  action?: "hangup";
 };
 
 // Per-call in-memory transcript buffer (cleared by process restart).
@@ -42,7 +44,7 @@ export async function buildAgentphoneVoiceResponse(body: Record<string, unknown>
   const lead = await getLead(leadId);
   const job = await getJob(jobId);
   if (!lead || !job) {
-    return { text: "Sorry, technical issue. Goodbye.", hangup: true };
+    return { text: "Sorry, technical issue. Goodbye.", hangup: true, action: "hangup" };
   }
 
   const user = await getUserByConversation(job.conversation_id);
@@ -63,10 +65,51 @@ export async function buildAgentphoneVoiceResponse(body: Record<string, unknown>
   };
 
   const history = transcripts.get(callId) ?? [];
-  const reply = await nextTurn(ctx, history, leadUtterance);
+  const turn = await nextTurn(ctx, history, leadUtterance);
   history.push({ role: "lead", text: leadUtterance });
-  history.push({ role: "agent", text: reply });
+  history.push({ role: "agent", text: turn.text });
   transcripts.set(callId, history);
 
-  return { text: reply, hangup: history.length >= 12 };
+  // Safety cap: even if the LLM never signals hangup, end the call after a
+  // bounded number of turns so we don't loop forever.
+  const TURN_CAP = 16;
+  const hangup = turn.shouldHangup || history.length >= TURN_CAP;
+  console.log("[agentphoneVoice] reply", {
+    callId,
+    turnCount: history.length,
+    hangup,
+    text: turn.text,
+  });
+
+  if (hangup) {
+    // Drop the in-memory transcript and synthesize a plain-text version we can
+    // hand to summarizeCall + the rest of the post-call pipeline. We do this
+    // ourselves rather than waiting for Agentphone's `agent.call.completed`
+    // webhook because in practice that webhook is unreliable, which leaves the
+    // dashboard stuck on "calling" and the user's approval text never sends.
+    const transcript = history
+      .map((h) => `${h.role === "agent" ? "Me" : lead.name}: ${h.text}`)
+      .join("\n");
+    transcripts.delete(callId);
+
+    // Run after the response is sent so we don't slow down the closing line.
+    // `recordCallEnd` is idempotent on `ended_at`, so if Agentphone's own
+    // completion webhook does fire later it'll no-op cleanly.
+    after(async () => {
+      try {
+        const { handleCallCompleted } = await import("@/lib/orchestrator");
+        await handleCallCompleted({
+          agentphoneCallId: callId,
+          transcript,
+          outcome: "completed",
+        });
+      } catch (e) {
+        console.error("[agentphoneVoice] self-trigger handleCallCompleted failed", e);
+      }
+    });
+
+    return { text: turn.text, hangup: true, action: "hangup" };
+  }
+
+  return { text: turn.text };
 }

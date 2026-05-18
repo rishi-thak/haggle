@@ -178,6 +178,13 @@ function isSkip(text: string): boolean {
   return /\b(skip|just go|whatever|idk|i don'?t know|nm|no preference|just call|move on)\b/i.test(text);
 }
 
+function isRetryRequest(text: string): boolean {
+  if (/\b(no|nah|stop|cancel|don't|dont)\b/i.test(text)) return false;
+  return /\b(retry|try again|again|rerun|run it back|go again|yes|yeah|yep|ok|okay|go)\b/i.test(
+    text,
+  );
+}
+
 function rankLead(l: {
   rating?: number;
   source_url?: string;
@@ -197,6 +204,75 @@ function isTerminalJobStatus(status: Job["status"]): boolean {
 
 function isResolutionLockedJobStatus(status: Job["status"]): boolean {
   return RESOLUTION_LOCKED_JOB_STATUSES.has(status);
+}
+
+function canFailOpenToUser(job: Job): boolean {
+  return !isTerminalJobStatus(job.status) && !isResolutionLockedJobStatus(job.status);
+}
+
+async function getJobForFailure(jobId: number): Promise<Job | null> {
+  try {
+    return await getJob(jobId);
+  } catch (error) {
+    console.error("[orchestrator] failed to load job after workflow error", error);
+    return null;
+  }
+}
+
+async function safeNotify(job: Job, text: string): Promise<void> {
+  try {
+    await notify(job, text);
+  } catch (error) {
+    console.error("[orchestrator] failed to notify user", error);
+  }
+}
+
+function startJobWorkflow(
+  label: string,
+  jobId: number,
+  workflow: () => Promise<void>,
+): void {
+  runJobWorkflowWithFallback(label, jobId, workflow).catch((error) => {
+    console.error(`[orchestrator] ${label} fallback failed`, error);
+  });
+}
+
+async function runJobWorkflowWithFallback(
+  label: string,
+  jobId: number,
+  workflow: () => Promise<void>,
+): Promise<void> {
+  try {
+    await workflow();
+    return;
+  } catch (firstError) {
+    console.error(`[orchestrator] ${label} crashed`, firstError);
+  }
+
+  const firstJob = await getJobForFailure(jobId);
+  if (!firstJob || !canFailOpenToUser(firstJob)) return;
+
+  await safeNotify(firstJob, "hit a snag on my side - retrying now");
+
+  try {
+    await workflow();
+    return;
+  } catch (retryError) {
+    console.error(`[orchestrator] ${label} retry failed`, retryError);
+  }
+
+  const latestJob = (await getJobForFailure(jobId)) ?? firstJob;
+  if (!canFailOpenToUser(latestJob)) return;
+
+  try {
+    await updateJob(jobId, { status: "failed" });
+  } catch (error) {
+    console.error("[orchestrator] failed to mark job failed", error);
+  }
+  await safeNotify(
+    latestJob,
+    "still stuck after a retry - reply retry and i'll run it again, or send different details",
+  );
 }
 
 async function sendFallbackEmailForLead(args: {
@@ -463,6 +539,18 @@ export async function handleInboundIMessage(args: {
     // Don't return — fall through to triage for new requests
   }
 
+  if (existing && existing.status === "failed" && isRetryRequest(text)) {
+    await logMessage({ jobId: existing.id, direction: "inbound", channel: "imessage", body: text });
+    const user = await getOrCreateUser(fromPhone);
+    await notify(existing, "trying again now");
+    startJobWorkflow(
+      "retryFailedJob",
+      existing.id,
+      () => retryFailedJob(existing.id, user.container_tag),
+    );
+    return;
+  }
+
   // Handle referral detection in messages
   if (!existing || isTerminalJobStatus(existing.status)) {
     const referral = parseReferralFromMessage(text);
@@ -546,8 +634,10 @@ export async function handleInboundIMessage(args: {
       await updateJob(existing.id, { intent_raw: expanded });
       const user = await getOrCreateUser(fromPhone);
       await notify(existing, "got it — searching now");
-      runLeadSearchAndApproval(existing.id, user.container_tag).catch((e) =>
-        console.error("[orchestrator] runLeadSearchAndApproval crashed", e),
+      startJobWorkflow(
+        "runLeadSearchAndApproval",
+        existing.id,
+        () => runLeadSearchAndApproval(existing.id, user.container_tag),
       );
       return;
     }
@@ -559,16 +649,20 @@ export async function handleInboundIMessage(args: {
       const user = await getOrCreateUser(fromPhone);
       if (isApproval(text) || isSkip(text)) {
         await notify(existing, "calling them now");
-        runCalls(existing.id, user.container_tag).catch((e) =>
-          console.error("[orchestrator] runCalls crashed", e),
+        startJobWorkflow(
+          "runCalls",
+          existing.id,
+          () => runCalls(existing.id, user.container_tag),
         );
       } else {
         const expanded = `${existing.intent_raw}\n\nuser feedback on options: ${text}`;
         await retirePendingLeadsBeforeResearch(existing.id);
         await updateJob(existing.id, { intent_raw: expanded });
         await notify(existing, "got it — re-searching with that in mind");
-        runLeadSearchAndApproval(existing.id, user.container_tag).catch((e) =>
-          console.error("[orchestrator] runLeadSearchAndApproval crashed", e),
+        startJobWorkflow(
+          "runLeadSearchAndApproval",
+          existing.id,
+          () => runLeadSearchAndApproval(existing.id, user.container_tag),
         );
       }
       return;
@@ -669,9 +763,11 @@ export async function handleInboundIMessage(args: {
     await sendUserMessage(conversationId, watchUrl, user.phone, replyFrom);
     await logMessage({ jobId: job.id, direction: "outbound", channel: "imessage", body: watchUrl });
   }
-  runIntentAndResearch(job.id, user.container_tag).catch((e) => {
-    console.error("[orchestrator] runIntentAndResearch crashed", e);
-  });
+  startJobWorkflow(
+    "runIntentAndResearch",
+    job.id,
+    () => runIntentAndResearch(job.id, user.container_tag),
+  );
 }
 
 async function applyParsedIntent(jobId: number, intent: Intent): Promise<void> {
@@ -728,6 +824,16 @@ async function retirePendingLeadsBeforeResearch(jobId: number): Promise<number> 
   const leadIds = getPendingLeadIdsToRetireBeforeResearch(leads);
   await Promise.all(leadIds.map((id) => updateLead(id, { status: "declined" })));
   return leadIds.length;
+}
+
+async function retryFailedJob(jobId: number, containerTag: string): Promise<void> {
+  const leads = getCallableLeads(await listLeads(jobId));
+  if (leads.some((lead) => lead.phone || lead.email)) {
+    await runCalls(jobId, containerTag);
+    return;
+  }
+
+  await runLeadSearchAndApproval(jobId, containerTag);
 }
 
 async function enrichTopLeads(args: {
@@ -890,12 +996,22 @@ async function runCalls(jobId: number, containerTag: string): Promise<void> {
   const intentTimeframe = job0.timeframe ?? "ASAP";
   const budgetCents = job0.budget_cents ?? 10000;
 
-  await enrichTopLeads({
-    jobId,
-    leads,
-    service: intentService,
-    location: intentLocation,
-  });
+  try {
+    await enrichTopLeads({
+      jobId,
+      leads,
+      service: intentService,
+      location: intentLocation,
+    });
+  } catch (error) {
+    console.error("[orchestrator] enrichTopLeads failed, continuing to call", error);
+    await logMessage({
+      jobId,
+      direction: "outbound",
+      channel: "system",
+      body: "Lead enrichment failed; continuing with existing contact info.",
+    }).catch(() => {});
+  }
 
   await updateJob(jobId, { status: "calling" });
   const job = (await getJob(jobId))!;
@@ -903,63 +1019,93 @@ async function runCalls(jobId: number, containerTag: string): Promise<void> {
   const calling = leads.filter((l) => l.phone).slice(0, MAX_PARALLEL_CALLS);
   const emailOnly = leads.filter((l) => !l.phone && l.email);
 
-  await Promise.all(
-    calling.map(async (lead) => {
-      const greeting = `Hi, this is Haggle calling about ${intentService}.`;
-      await logMessage({
-        jobId,
-        direction: "outbound",
-        channel: "system",
-        body: `Issuing call to ${lead.name}${lead.phone ? ` at ${lead.phone}` : ""}.`,
-      });
-      const past = await recallProviderHistory(containerTag, intentService, lead.name);
-      const ctx: NegotiationContext = {
-        jobId,
-        leadId: lead.id,
-        service: intentService || "service",
-        location: intentLocation,
-        budgetCents,
-        timeframe: intentTimeframe,
-        userPreferences: [],
-        pastProviderNotes: past.summary,
-        enrichmentNotes: lead.notes ?? undefined,
-        businessName: lead.name,
-      };
-      const call = await createOutboundCall({
-        toNumber: lead.phone!,
-        initialGreeting: greeting,
-        systemPrompt: buildSystemPrompt(ctx),
-        variables: { jobId: String(jobId), leadId: String(lead.id) },
-      });
-      if (call) {
-        await recordCallStart({ jobId, leadId: lead.id, agentphoneCallId: call.id });
-        await updateLead(lead.id, { status: "calling" });
-      } else {
-        await updateLead(lead.id, { status: "no_answer" });
-      }
-    }),
-  );
-
-  // Fire fallback emails to phone-less leads
-  if (emailOnly.length) {
-    await updateJob(jobId, { status: "email_fallback" });
-    for (const lead of emailOnly) {
-      const ok = await sendFallbackEmailForLead({
-        job,
-        lead,
-        budgetCents,
-        timeframe: intentTimeframe,
-      });
-      await updateLead(lead.id, { status: ok ? "emailed" : "no_answer" });
-    }
-    await notify(job, `also emailed ${emailOnly.length} that didn't have a phone listed`);
-  }
-
-  await notify(job, `dialed ${calling.length} — i'll text you when they quote`);
-
   if (!calling.length && !emailOnly.length) {
     await updateJob(jobId, { status: "failed" });
     await notify(job, "none of them had a phone or email — try a different area?");
+    return;
+  }
+
+  const callResults = await Promise.all(
+    calling.map(async (lead) => {
+      try {
+        const greeting = `Hi, this is Haggle calling about ${intentService}.`;
+        await logMessage({
+          jobId,
+          direction: "outbound",
+          channel: "system",
+          body: `Issuing call to ${lead.name}${lead.phone ? ` at ${lead.phone}` : ""}.`,
+        });
+        const past = await recallProviderHistory(containerTag, intentService, lead.name);
+        const ctx: NegotiationContext = {
+          jobId,
+          leadId: lead.id,
+          service: intentService || "service",
+          location: intentLocation,
+          budgetCents,
+          timeframe: intentTimeframe,
+          userPreferences: [],
+          pastProviderNotes: past.summary,
+          enrichmentNotes: lead.notes ?? undefined,
+          businessName: lead.name,
+        };
+        const call = await createOutboundCall({
+          toNumber: lead.phone!,
+          initialGreeting: greeting,
+          systemPrompt: buildSystemPrompt(ctx),
+          variables: { jobId: String(jobId), leadId: String(lead.id) },
+        });
+        if (call) {
+          await recordCallStart({ jobId, leadId: lead.id, agentphoneCallId: call.id });
+          await updateLead(lead.id, { status: "calling" });
+          return true;
+        }
+
+        await updateLead(lead.id, { status: "no_answer" });
+        return false;
+      } catch (error) {
+        console.error(`[orchestrator] failed to start call for lead ${lead.id}`, error);
+        await updateLead(lead.id, { status: "no_answer" }).catch(() => {});
+        await logMessage({
+          jobId,
+          direction: "outbound",
+          channel: "system",
+          body: `Call setup failed for ${lead.name}; continuing with other providers.`,
+        }).catch(() => {});
+        return false;
+      }
+    }),
+  );
+  const dialedCount = callResults.filter(Boolean).length;
+
+  // Fire fallback emails to phone-less leads
+  let emailedCount = 0;
+  if (emailOnly.length) {
+    await updateJob(jobId, { status: "email_fallback" });
+    for (const lead of emailOnly) {
+      try {
+        const ok = await sendFallbackEmailForLead({
+          job,
+          lead,
+          budgetCents,
+          timeframe: intentTimeframe,
+        });
+        await updateLead(lead.id, { status: ok ? "emailed" : "no_answer" });
+        if (ok) emailedCount++;
+      } catch (error) {
+        console.error(`[orchestrator] failed to email lead ${lead.id}`, error);
+        await updateLead(lead.id, { status: "no_answer" }).catch(() => {});
+      }
+    }
+    if (emailedCount > 0) {
+      await notify(job, `also emailed ${emailedCount} that didn't have a phone listed`);
+    }
+  }
+
+  if (dialedCount > 0) {
+    await notify(job, `dialed ${dialedCount} — i'll text you when they quote`);
+  } else if (emailedCount === 0) {
+    await updateJob(jobId, { status: "failed" });
+    await notify(job, "couldn't get any calls or emails out — reply retry and i'll search again");
   }
 }
 

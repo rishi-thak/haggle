@@ -189,14 +189,17 @@ function useWatchSnapshot(token: string): ApiState {
     let timer: ReturnType<typeof setTimeout> | null = null;
 
     async function load() {
+      let shouldRetry = true;
       try {
         const res = await fetch(`/api/watch/${encodeURIComponent(token)}`, {
           cache: "no-store",
         });
         const text = await res.text();
         const json = text ? JSON.parse(text) : {};
-        if (!res.ok || !json.ok)
+        if (!res.ok || !json.ok) {
+          if (res.status === 404) shouldRetry = false;
           throw new Error(json.error || "Failed to load watch snapshot");
+        }
         if (!cancelled) {
           setState({
             status: "ready",
@@ -213,7 +216,7 @@ function useWatchSnapshot(token: string): ApiState {
           }));
         }
       } finally {
-        if (!cancelled) timer = setTimeout(load, 2_000);
+        if (!cancelled && shouldRetry) timer = setTimeout(load, 2_000);
       }
     }
 

@@ -16,6 +16,69 @@ export interface MemoryResult {
   metadata?: Record<string, unknown>;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function textValue(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+function scoreValue(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function metadataValue(value: unknown): Record<string, unknown> | undefined {
+  return isRecord(value) ? value : undefined;
+}
+
+function chunkContent(value: unknown): string | null {
+  if (typeof value === "string") return textValue(value);
+  if (!isRecord(value)) return null;
+  return textValue(value.content);
+}
+
+function chunksContent(value: unknown): string | null {
+  if (!Array.isArray(value)) return null;
+
+  const relevant = value.find(
+    (chunk) => isRecord(chunk) && chunk.isRelevant === true && chunkContent(chunk),
+  );
+  const firstWithContent = relevant ?? value.find((chunk) => chunkContent(chunk));
+  return chunkContent(firstWithContent);
+}
+
+function resultContent(result: Record<string, unknown>): string | null {
+  return (
+    textValue(result.content) ??
+    textValue(result.text) ??
+    textValue(result.memory) ??
+    chunkContent(result.chunk) ??
+    chunksContent(result.chunks) ??
+    null
+  );
+}
+
+function normalizeMemoryResult(value: unknown, index: number): MemoryResult | null {
+  if (!isRecord(value)) return null;
+
+  const content = resultContent(value);
+  if (!content) return null;
+
+  return {
+    id:
+      textValue(value.id) ??
+      textValue(value.documentId) ??
+      textValue(value.memoryId) ??
+      `result-${index}`,
+    content,
+    score: scoreValue(value.score) ?? scoreValue(value.similarity),
+    metadata: metadataValue(value.metadata),
+  };
+}
+
 export async function addMemory(
   containerTag: string,
   content: string,
@@ -58,15 +121,11 @@ export async function searchMemories(
       console.error("[supermemory] search failed", res.status, await res.text());
       return [];
     }
-    const json = (await res.json()) as { results?: Array<Partial<MemoryResult> & { text?: string }> };
-    return (json.results ?? [])
-      .map((r) => ({
-        id: r.id ?? "",
-        content: r.content ?? r.text ?? "",
-        score: r.score,
-        metadata: r.metadata,
-      }))
-      .filter((r) => r.content.length > 0);
+    const json = (await res.json()) as { results?: unknown };
+    if (!Array.isArray(json.results)) return [];
+    return json.results
+      .map((result, index) => normalizeMemoryResult(result, index))
+      .filter((result): result is MemoryResult => result !== null);
   } catch (e) {
     console.error("[supermemory] search error", e);
     return [];
